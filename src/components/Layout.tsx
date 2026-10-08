@@ -4,7 +4,7 @@ import { useApp } from '../context/AppContext';
 import {
   LayoutDashboard, FolderKanban, GitBranch, PlayCircle,
   Bug, FileCheck, BarChart3, Plug, Settings, LogOut,
-  Menu, X, ChevronRight, Zap, Map
+  Menu, X, ChevronRight, Zap, Map, Layers
 } from 'lucide-react';
 
 const navItems = [
@@ -17,6 +17,7 @@ const navItems = [
   { path: '/app/qa-cases', label: 'QA Cases', icon: FileCheck },
   { path: '/app/reports', label: 'Reports', icon: BarChart3 },
   { path: '/app/integrations', label: 'Integrations', icon: Plug },
+  { path: '/app/architecture', label: 'Architecture', icon: Layers },
   { path: '/app/settings', label: 'Settings', icon: Settings },
 ];
 

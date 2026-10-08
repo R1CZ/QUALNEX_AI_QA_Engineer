@@ -15,6 +15,7 @@ import Integrations from './pages/Integrations';
 import SettingsPage from './pages/Settings';
 import AppMap from './pages/AppMap';
 import QARunDetail from './pages/QARunDetail';
+import Architecture from './pages/Architecture';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useApp();
@@ -48,6 +49,8 @@ function AppRoutes() {
         <Route path="qa-cases" element={<QACases />} />
         <Route path="reports" element={<Reports />} />
         <Route path="integrations" element={<Integrations />} />
+        <Route path="architecture" element={<Architecture />} />
+        <Route path="qa-runs/:runId" element={<QARunDetail />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
