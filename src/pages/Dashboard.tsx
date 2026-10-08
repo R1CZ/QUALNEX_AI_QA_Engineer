@@ -41,14 +41,6 @@ export default function Dashboard() {
         </Link>
       </div>
 
-      {/* Demo Mode Indicator */}
-      {dashboard.activeRuns > 0 && (
-        <div className="mb-6 px-4 py-2.5 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
-          <span className="text-xs font-medium text-violet-400">Demo Mode — Showing sample data to illustrate platform capabilities</span>
-        </div>
-      )}
-
       {/* Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {stats.map((stat, index) => {

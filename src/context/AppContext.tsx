@@ -19,6 +19,8 @@ interface AppContextType extends AppState {
   createProject: (project: Omit<Project, 'id' | 'createdAt' | 'status'>) => void;
   startQARun: (projectId: string) => void;
   connectIntegration: (integration: Omit<Integration, 'id'>) => void;
+  isDemoMode: boolean;
+  toggleDemoMode: () => void;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -252,6 +254,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dashboard: emptyDashboard,
   });
 
+  // Demo mode toggle - persisted in localStorage
+  const [isDemoMode, setIsDemoMode] = useState(() => {
+    const stored = localStorage.getItem('qualnex_demo_mode');
+    return stored === null ? true : stored === 'true'; // Default to demo mode
+  });
+
+  const toggleDemoMode = useCallback(() => {
+    setIsDemoMode(prev => {
+      const newValue = !prev;
+      localStorage.setItem('qualnex_demo_mode', String(newValue));
+      
+      // Update state based on mode
+      if (newValue) {
+        // Switch to demo mode - populate with demo data
+        setState(s => ({
+          ...s,
+          dashboard: demoDashboard,
+          projects: demoProjects,
+          qaRuns: demoRuns,
+          bugs: demoBugs,
+          qaCases: demoQACases,
+        }));
+      } else {
+        // Switch to live mode - clear to empty state
+        setState(s => ({
+          ...s,
+          dashboard: emptyDashboard,
+          projects: [],
+          qaRuns: [],
+          bugs: [],
+          qaCases: [],
+        }));
+      }
+      
+      return newValue;
+    });
+  }, []);
+
   const login = useCallback((provider: 'google' | 'github') => {
     // In production, this would redirect to OAuth flow
     // For now, simulate authentication
@@ -272,13 +312,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         plan: 'pro',
         createdAt: new Date().toISOString(),
       },
-      dashboard: demoDashboard,
-      projects: demoProjects,
-      qaRuns: demoRuns,
-      bugs: demoBugs,
-      qaCases: demoQACases,
+      // Load demo data only if demo mode is enabled
+      dashboard: isDemoMode ? demoDashboard : emptyDashboard,
+      projects: isDemoMode ? demoProjects : [],
+      qaRuns: isDemoMode ? demoRuns : [],
+      bugs: isDemoMode ? demoBugs : [],
+      qaCases: isDemoMode ? demoQACases : [],
     }));
-  }, []);
+  }, [isDemoMode]);
 
   const logout = useCallback(() => {
     setState(prev => ({
@@ -341,6 +382,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       createProject,
       startQARun,
       connectIntegration,
+      isDemoMode,
+      toggleDemoMode,
     }}>
       {children}
     </AppContext.Provider>
