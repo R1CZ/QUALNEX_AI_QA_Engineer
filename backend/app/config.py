@@ -58,15 +58,16 @@ class Settings(BaseSettings):
     github_app_client_id: str = ""
     github_app_client_secret: str = ""
     
-    # AI - Qwen
-    qwen_api_key: str = ""
-    qwen_api_base: str = "https://dashscope.aliyuncs.com/api/v1"
-    qwen_model: str = "qwen-max"
-    qwen_max_tokens: int = 4096
-    qwen_temperature: float = 0.1
+    # AI - DeepSeek (OpenAI-compatible API)
+    deepseek_api_key: str = ""
+    deepseek_api_base: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-chat"  # DeepSeek-V3
+    deepseek_reasoner_model: str = "deepseek-reasoner"  # DeepSeek-R1 for complex reasoning
+    deepseek_max_tokens: int = 4096
+    deepseek_temperature: float = 0.1
     
     # AI - Fallback
-    fallback_model: str = "qwen-plus"
+    fallback_model: str = "deepseek-chat"
     ai_max_retries: int = 3
     ai_timeout_seconds: int = 120
     

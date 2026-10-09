@@ -30,7 +30,7 @@ const layers = [
   },
   {
     name: 'AI Orchestration',
-    tech: 'Qwen (Primary) + Provider Abstraction',
+    tech: 'DeepSeek (OpenAI-Compatible) + Provider Abstraction',
     icon: Bot,
     color: 'from-emerald-400 to-emerald-500',
     items: ['Discovery Agent', 'Planning Agent', 'Browser QA Agent', 'API QA Agent', 'Validation Agent', 'Dedup Agent', 'QA Case Agent'],
@@ -188,7 +188,7 @@ export default function Architecture() {
           <StackSection title="Frontend" items={['TypeScript', 'React 18', 'Next.js', 'Tailwind CSS', 'Framer Motion']} />
           <StackSection title="Backend" items={['Python 3.12', 'FastAPI', 'SQLAlchemy', 'Pydantic', 'httpx']} />
           <StackSection title="Infrastructure" items={['Docker', 'PostgreSQL 16', 'Redis 7', 'MinIO (S3)', 'GitHub Actions']} />
-          <StackSection title="QA Engine" items={['Playwright', 'Qwen AI', 'Chromium', 'Container Sandbox', 'WebSocket/SSE']} />
+          <StackSection title="QA Engine" items={['Playwright', 'DeepSeek AI', 'Chromium', 'Container Sandbox', 'WebSocket/SSE']} />
         </div>
       </div>
 
