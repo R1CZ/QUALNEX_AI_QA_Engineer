@@ -168,6 +168,7 @@ docker-compose up -d
 | **DEPLOYMENT.md** | Production deployment guide |
 | **FIREBASE_SETUP.md** | Firebase authentication setup |
 | **DEEPSEEK_SETUP.md** | DeepSeek AI setup |
+| **JIRA_SETUP.md** | Jira integration setup guide |
 | **FIREBASE_INTEGRATION_COMPLETE.md** | Firebase implementation details |
 | **AI_PROVIDER_SWITCH.md** | DeepSeek migration details |
 | **AUTH_OPTIONS_COMPARISON.md** | Free auth options comparison |

@@ -13,14 +13,50 @@ interface IntegrationConfig {
   description: string;
   icon: string;
   color: string;
+  setupGuide?: string | null;
 }
 
 const integrations: IntegrationConfig[] = [
-  { vendor: 'jira', name: 'Jira', description: 'Create issues in Atlassian Jira projects', icon: 'J', color: 'from-blue-500 to-blue-600' },
-  { vendor: 'github', name: 'GitHub Issues', description: 'Create issues in GitHub repositories', icon: 'G', color: 'from-slate-400 to-slate-500' },
-  { vendor: 'linear', name: 'Linear', description: 'Create issues in Linear projects', icon: 'L', color: 'from-violet-500 to-violet-600' },
-  { vendor: 'azure_devops', name: 'Azure DevOps', description: 'Create work items in Azure DevOps', icon: 'A', color: 'from-blue-400 to-indigo-500' },
-  { vendor: 'servicenow', name: 'ServiceNow', description: 'Create incidents in ServiceNow', icon: 'S', color: 'from-green-500 to-teal-600' },
+  { 
+    vendor: 'jira', 
+    name: 'Jira', 
+    description: 'Create issues in Atlassian Jira Cloud or Server/Data Center. Requires API token.', 
+    icon: 'J', 
+    color: 'from-blue-500 to-blue-600',
+    setupGuide: 'JIRA_SETUP.md'
+  },
+  { 
+    vendor: 'github', 
+    name: 'GitHub Issues', 
+    description: 'Create issues in GitHub repositories. Uses GitHub App installation.', 
+    icon: 'G', 
+    color: 'from-slate-400 to-slate-500',
+    setupGuide: null
+  },
+  { 
+    vendor: 'linear', 
+    name: 'Linear', 
+    description: 'Create issues in Linear projects. Requires API key.', 
+    icon: 'L', 
+    color: 'from-violet-500 to-violet-600',
+    setupGuide: null
+  },
+  { 
+    vendor: 'azure_devops', 
+    name: 'Azure DevOps', 
+    description: 'Create work items in Azure DevOps', 
+    icon: 'A', 
+    color: 'from-blue-400 to-indigo-500',
+    setupGuide: null
+  },
+  { 
+    vendor: 'servicenow', 
+    name: 'ServiceNow', 
+    description: 'Create incidents in ServiceNow', 
+    icon: 'S', 
+    color: 'from-green-500 to-teal-600',
+    setupGuide: null
+  },
 ];
 
 export default function Integrations() {
@@ -98,6 +134,17 @@ export default function Integrations() {
                     )}
                   </div>
                   <p className="text-xs text-slate-400 mt-1">{integration.description}</p>
+                  {integration.setupGuide && (
+                    <a 
+                      href={`https://github.com/your-org/qualnex/blob/main/${integration.setupGuide}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 mt-2"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Setup Guide
+                    </a>
+                  )}
                 </div>
               </div>
 
