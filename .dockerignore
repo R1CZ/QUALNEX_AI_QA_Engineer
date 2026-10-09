@@ -1,0 +1,63 @@
+# Dependencies
+node_modules
+backend/venv
+backend/__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+
+# Environment files
+.env
+.env.local
+.env.*.local
+backend/.env
+backend/.env.*
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.yml
+compose.yaml
+Dockerfile
+**/Dockerfile
+
+# Documentation
+*.md
+LICENSE
+docs
+
+# Tests
+**/test
+**/tests
+**/*.test.*
+**/*.spec.*
+coverage
+.nyc_output
+
+# Misc
+*.log
+logs
+.cache
+.parcel-cache
+.pytest_cache
+.mypy_cache

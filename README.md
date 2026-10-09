@@ -8,12 +8,38 @@ QUALNEX connects to your GitHub repository, builds your application in a secure 
 
 ## 🚀 Quick Start
 
+### 📁 Project Structure
+
+```
+QUALNEX_AI_QA_Engineer/
+├── src/                    # Frontend (React + Vite + TypeScript)
+├── backend/                # Backend (FastAPI + Python)
+├── compose.yaml            # Docker Compose configuration
+├── Dockerfile              # Frontend Docker build
+├── nginx.conf              # Nginx config for frontend
+├── package.json            # Frontend dependencies
+├── .env.example            # Frontend env template
+├── backend/.env.example    # Backend env template
+└── README.md               # This file
+```
+
 ### Option 1: Docker (Recommended)
 
+**For Windows (PowerShell):**
+```powershell
+# Clone the repository
+git clone https://github.com/YOUR_USERNAME/qualnex.git
+cd QUALNEX_AI_QA_Engineer
+
+# Run the quick start script
+.\quickstart.bat
+```
+
+**For Linux/Mac:**
 ```bash
 # Clone the repository
 git clone https://github.com/YOUR_USERNAME/qualnex.git
-cd qualnex
+cd QUALNEX_AI_QA_Engineer
 
 # Run the quick start script
 chmod +x quickstart.sh
@@ -22,9 +48,8 @@ chmod +x quickstart.sh
 
 The script will:
 1. Check Docker installation
-2. Create `.env` file from template
-3. Generate security keys
-4. Start all services
+2. Create `.env` files from templates
+3. Start all services
 
 **Access the application:**
 - Frontend: http://localhost:3000
@@ -36,19 +61,55 @@ The script will:
 ```bash
 # Clone and configure
 git clone https://github.com/YOUR_USERNAME/qualnex.git
-cd qualnex
-cp .env.example .env
+cd QUALNEX_AI_QA_Engineer
 
-# Edit .env with your OAuth credentials and API keys
-nano .env
+# Create environment files
+cp .env.example .env
+cp backend/.env.example backend/.env
+
+# Edit .env with your Firebase credentials and API keys
+# Windows: notepad .env
+# Linux/Mac: nano .env
 
 # Start services
-docker-compose up -d
+docker compose up -d
 ```
 
-### Option 3: Local Development
+### Option 3: Local Development (Without Docker)
 
 See [SETUP_GUIDE.md](SETUP_GUIDE.md) for detailed local development setup.
+
+### 🪟 Windows-Specific Instructions
+
+1. **Install Docker Desktop for Windows**
+   - Download from: https://docs.docker.com/desktop/install/windows-install/
+   - Enable WSL 2 backend (recommended)
+   - Restart your computer after installation
+
+2. **Start Docker Desktop**
+   - Open Docker Desktop from Start Menu
+   - Wait for it to show "Engine running"
+
+3. **Run the project**
+   ```powershell
+   cd C:\Users\YOUR_USERNAME\QUALNEX_AI_QA_Engineer
+   .\quickstart.bat
+   ```
+
+4. **Or manually start services**
+   ```powershell
+   docker compose up -d
+   ```
+
+5. **View logs**
+   ```powershell
+   docker compose logs -f
+   ```
+
+6. **Stop services**
+   ```powershell
+   docker compose down
+   ```
 
 ---
 
