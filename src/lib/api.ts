@@ -3,13 +3,13 @@
  * Handles all communication with the FastAPI backend
  */
 
-// @ts-ignore - Vite env
-const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || '/api';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
     super(message);
+    this.name = 'ApiError';
     this.status = status;
   }
 }
@@ -62,6 +62,15 @@ class ApiClient {
       return response.json();
     } catch (error) {
       if (error instanceof ApiError) throw error;
+      
+      // Network error - backend might not be running
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        throw new ApiError(
+          'Cannot connect to QUALNEX API. Please ensure the backend server is running.',
+          0
+        );
+      }
+      
       throw new ApiError('Network error', 0);
     }
   }
@@ -173,11 +182,16 @@ class ApiClient {
     return this.request<any>('GET', `/v1/projects/${projectId}/app-map`);
   }
 
+  // ============ Health Check ============
+
+  async healthCheck() {
+    return this.request<{ status: string }>('GET', '/health');
+  }
+
   // ============ WebSocket for real-time updates ============
 
   connectRunUpdates(runId: string): WebSocket {
-    // @ts-ignore - Vite env
-    const wsUrl = ((typeof import.meta !== 'undefined' && import.meta.env?.VITE_WS_URL) || 'ws://localhost:8000')
+    const wsUrl = (import.meta.env.VITE_WS_URL || 'ws://localhost:8000')
       .replace('http', 'ws');
     const ws = new WebSocket(`${wsUrl}/v1/runs/${runId}/ws`);
     
@@ -192,4 +206,3 @@ class ApiClient {
 }
 
 export const apiClient = new ApiClient();
-export { ApiError };

@@ -4,7 +4,7 @@ import { useApp } from '../context/AppContext';
 import {
   LayoutDashboard, FolderKanban, GitBranch, PlayCircle,
   Bug, FileCheck, BarChart3, Plug, Settings, LogOut,
-  Menu, X, ChevronRight, Zap, Map, Layers, ToggleLeft, ToggleRight
+  Menu, X, ChevronRight, Zap, Map, Layers
 } from 'lucide-react';
 
 const navItems = [
@@ -22,7 +22,7 @@ const navItems = [
 ];
 
 export default function AppLayout() {
-  const { logout, user, organization, isDemoMode, toggleDemoMode } = useApp();
+  const { logout, user, organization } = useApp();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -119,33 +119,6 @@ export default function AppLayout() {
           </button>
           <div className="flex-1" />
           <div className="flex items-center gap-3">
-            {/* Demo Mode Toggle */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-navy-800/50 border border-navy-700/50 group relative">
-              <button
-                onClick={toggleDemoMode}
-                className="flex items-center gap-2 text-xs font-medium transition-colors"
-                title={isDemoMode ? 'Switch to Live Mode (empty state, ready for real data)' : 'Switch to Demo Mode (sample data)'}
-              >
-                {isDemoMode ? (
-                  <>
-                    <ToggleRight className="w-4 h-4 text-amber-400" />
-                    <span className="text-amber-400">Demo</span>
-                  </>
-                ) : (
-                  <>
-                    <ToggleLeft className="w-4 h-4 text-emerald-400" />
-                    <span className="text-emerald-400">Live</span>
-                  </>
-                )}
-              </button>
-              
-              {/* Tooltip */}
-              <div className="absolute right-0 top-full mt-2 px-3 py-2 bg-navy-950 border border-navy-700 rounded-lg text-xs text-slate-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl">
-                {isDemoMode ? 'Click to switch to Live Mode' : 'Click to switch to Demo Mode'}
-                <div className="absolute right-3 -top-1 w-2 h-2 bg-navy-950 border-l border-t border-navy-700 rotate-45" />
-              </div>
-            </div>
-
             {/* System Status */}
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-400/10 border border-emerald-400/20">
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />

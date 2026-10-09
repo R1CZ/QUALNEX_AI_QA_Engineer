@@ -150,8 +150,8 @@ export default function Projects() {
           <QAConfigModal
             projectName={projects.find(p => p.id === qaConfigProject)?.name || 'Project'}
             onClose={() => setQaConfigProject(null)}
-            onStart={(config) => {
-              startQARun(qaConfigProject);
+            onStart={async (config) => {
+              await startQARun(qaConfigProject, config);
               setQaConfigProject(null);
             }}
           />
