@@ -48,53 +48,61 @@ class IntegrationConnect(BaseModel):
 
 # ============ Auth Endpoints ============
 
+class FirebaseLoginRequest(BaseModel):
+    firebaseToken: str
+    uid: str
+    email: Optional[str] = None
+    displayName: Optional[str] = None
+    photoURL: Optional[str] = None
+    provider: str
+
+@router.post("/auth/firebase")
+async def firebase_auth(request: FirebaseLoginRequest):
+    """
+    Verify Firebase ID token and create/get user session.
+    This is the main authentication endpoint when using Firebase Auth.
+    """
+    from app.core.firebase_auth import verify_firebase_token, get_or_create_user
+    
+    # Verify Firebase token
+    firebase_user = await verify_firebase_token(request.firebaseToken)
+    
+    if not firebase_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Firebase token"
+        )
+    
+    # Get or create user in database
+    user_data = await get_or_create_user(firebase_user)
+    
+    # Create backend session token (JWT)
+    token = create_access_token({
+        "sub": user_data["id"],
+        "email": user_data["email"],
+        "role": user_data["role"],
+        "organization_id": user_data["organizationId"],
+    })
+    
+    return {
+        "token": token,
+        "user": user_data,
+    }
+
+# Keep old OAuth endpoints for backwards compatibility
 @router.get("/auth/google/url")
 async def google_auth_url():
-    """Get Google OAuth authorization URL"""
+    """Get Google OAuth authorization URL (legacy - use Firebase instead)"""
     state = secrets.token_urlsafe(32)
-    # In production: store state in Redis with TTL for CSRF validation
     url = get_google_auth_url(state)
     return {"url": url, "state": state}
 
 @router.get("/auth/github/url")
 async def github_auth_url():
-    """Get GitHub OAuth authorization URL"""
+    """Get GitHub OAuth authorization URL (legacy - use Firebase instead)"""
     state = secrets.token_urlsafe(32)
     url = get_github_auth_url(state)
     return {"url": url, "state": state}
-
-@router.post("/auth/callback", response_model=AuthResponse)
-async def auth_callback(request: LoginRequest):
-    """Handle OAuth callback and return JWT"""
-    if request.provider == "google":
-        user_info = await google_exchange_code(request.code)
-    elif request.provider == "github":
-        user_info = await github_exchange_code(request.code)
-    else:
-        raise HTTPException(status_code=400, detail="Unsupported provider")
-    
-    if not user_info:
-        raise HTTPException(status_code=401, detail="Authentication failed")
-    
-    # In production: find or create user in database
-    # user = await get_or_create_user(user_info)
-    
-    # Create JWT
-    token = create_access_token({
-        "sub": user_info.get("provider_id", ""),
-        "email": user_info.get("email", ""),
-        "provider": user_info.get("provider", ""),
-    })
-    
-    return AuthResponse(
-        access_token=token,
-        user={
-            "id": user_info.get("provider_id"),
-            "email": user_info.get("email"),
-            "name": user_info.get("name"),
-            "avatar": user_info.get("avatar"),
-        }
-    )
 
 # ============ User Endpoints ============
 

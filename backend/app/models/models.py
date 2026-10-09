@@ -84,8 +84,11 @@ class User(Base):
     role = Column(Enum(UserRole), default=UserRole.MEMBER, nullable=False)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
     
-    # OAuth
-    provider = Column(String(50))  # google, github
+    # Firebase Authentication
+    firebase_uid = Column(String(255), unique=True, index=True)
+    
+    # OAuth (legacy - kept for backwards compatibility)
+    provider = Column(String(50))  # google, github, firebase
     provider_id = Column(String(255))
     
     # Timestamps

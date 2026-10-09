@@ -70,19 +70,24 @@ See [SETUP_GUIDE.md](SETUP_GUIDE.md) for detailed local development setup.
 
 Before running QUALNEX, you need to configure:
 
-### 1. OAuth Credentials
+### 1. Firebase Authentication (FREE - Recommended)
 
-**Google OAuth:**
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create OAuth 2.0 credentials
-3. Add redirect URI: `http://localhost:3000/auth/google/callback`
-4. Copy Client ID and Secret to `.env`
+QUALNEX uses **Firebase Authentication** which is **completely free** for up to 50,000 monthly active users.
 
-**GitHub OAuth:**
-1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
-2. Create new OAuth App
-3. Set callback URL: `http://localhost:3000/auth/github/callback`
-4. Copy Client ID and Secret to `.env`
+**Quick Setup:**
+1. Go to [Firebase Console](https://console.firebase.google.com/)
+2. Create a new project (free)
+3. Enable Authentication → Google and GitHub providers
+4. Add a web app and copy the config
+5. See **[FIREBASE_SETUP.md](FIREBASE_SETUP.md)** for detailed instructions
+
+**What you get for FREE:**
+- ✅ 50,000 monthly active users
+- ✅ Google Sign-In
+- ✅ GitHub Sign-In
+- ✅ Email/Password (optional)
+- ✅ Phone Auth (limited)
+- ✅ No credit card required
 
 ### 2. AI Provider (Qwen)
 

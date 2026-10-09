@@ -77,20 +77,21 @@ class ApiClient {
 
   // ============ Auth ============
 
-  async getGoogleAuthUrl(): Promise<{ url: string; state: string }> {
-    return this.request('GET', '/v1/auth/google/url');
-  }
-
-  async getGitHubAuthUrl(): Promise<{ url: string; state: string }> {
-    return this.request('GET', '/v1/auth/github/url');
-  }
-
-  async authCallback(code: string, provider: string, state: string) {
-    const result = await this.request<{ access_token: string; user: any }>(
-      'POST', '/v1/auth/callback', { code, provider, state }
+  async verifyFirebaseToken(firebaseToken: string, userData: {
+    uid: string;
+    email: string | null;
+    displayName: string | null;
+    photoURL: string | null;
+    provider: string;
+  }) {
+    const result = await this.request<any>(
+      'POST', '/v1/auth/firebase', { firebaseToken, ...userData }
     );
-    this.setToken(result.access_token);
-    return result;
+    // Store the backend session token
+    if (result.token) {
+      this.setToken(result.token);
+    }
+    return result.user || result;
   }
 
   // ============ User ============

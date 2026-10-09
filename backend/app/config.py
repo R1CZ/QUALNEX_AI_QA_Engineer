@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     github_client_secret: str = ""
     github_redirect_uri: str = "http://localhost:3000/auth/github/callback"
     
+    # Firebase Authentication
+    firebase_api_key: str = ""
+    firebase_auth_domain: str = ""
+    firebase_project_id: str = ""
+    firebase_service_account_key: str = ""  # Path to service account JSON file
+    
     # GitHub App
     github_app_id: str = ""
     github_app_private_key: str = ""

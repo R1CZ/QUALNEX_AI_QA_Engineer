@@ -1,40 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Zap, ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { signInWithGoogle, signInWithGitHub } from '../lib/firebase';
 
 export default function Login() {
-  const { login, handleOAuthCallback, error, clearError, isAuthenticated, isLoading } = useApp();
+  const { login, error, clearError, isAuthenticated, isLoading } = useApp();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-
-  // Handle OAuth callback
-  useEffect(() => {
-    const code = searchParams.get('code');
-    const state = searchParams.get('state');
-    const provider = searchParams.get('provider');
-    const errorParam = searchParams.get('error');
-
-    if (errorParam) {
-      setLoginError(errorParam);
-      return;
-    }
-
-    if (code && state && provider) {
-      setIsProcessing(true);
-      handleOAuthCallback(code, provider, state)
-        .then(() => {
-          navigate('/app/dashboard');
-        })
-        .catch((err) => {
-          setLoginError(err.message || 'Authentication failed');
-          setIsProcessing(false);
-        });
-    }
-  }, [searchParams, handleOAuthCallback, navigate]);
 
   // Redirect if already authenticated
   useEffect(() => {
@@ -43,14 +18,32 @@ export default function Login() {
     }
   }, [isAuthenticated, isLoading, navigate]);
 
-  const handleLogin = async (provider: 'google' | 'github') => {
+  const handleGoogleLogin = async () => {
     try {
       setLoginError(null);
       setIsProcessing(true);
-      await login(provider);
-      // Will redirect to OAuth provider
+      clearError();
+      
+      const userData = await signInWithGoogle();
+      await login(userData);
+      navigate('/app/dashboard');
     } catch (err: any) {
-      setLoginError(err.message || 'Failed to initiate login');
+      setLoginError(err.message || 'Google sign-in failed');
+      setIsProcessing(false);
+    }
+  };
+
+  const handleGitHubLogin = async () => {
+    try {
+      setLoginError(null);
+      setIsProcessing(true);
+      clearError();
+      
+      const userData = await signInWithGitHub();
+      await login(userData);
+      navigate('/app/dashboard');
+    } catch (err: any) {
+      setLoginError(err.message || 'GitHub sign-in failed');
       setIsProcessing(false);
     }
   };
@@ -113,7 +106,7 @@ export default function Login() {
           <div className="glass-card rounded-xl p-8 space-y-4">
             {/* Google OAuth */}
             <button
-              onClick={() => handleLogin('google')}
+              onClick={handleGoogleLogin}
               disabled={isProcessing}
               className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white hover:bg-slate-100 disabled:opacity-60 text-navy-950 font-medium rounded-lg transition-colors"
             >
@@ -128,7 +121,7 @@ export default function Login() {
 
             {/* GitHub OAuth */}
             <button
-              onClick={() => handleLogin('github')}
+              onClick={handleGitHubLogin}
               disabled={isProcessing}
               className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-navy-700 hover:bg-navy-600 disabled:opacity-60 text-white font-medium rounded-lg transition-colors border border-navy-600"
             >
@@ -143,13 +136,13 @@ export default function Login() {
                 <div className="w-full border-t border-navy-700" />
               </div>
               <div className="relative flex justify-center text-xs">
-                <span className="px-2 text-slate-500 bg-navy-800">Secure OAuth Authentication</span>
+                <span className="px-2 text-slate-500 bg-navy-800">Secure Firebase Authentication</span>
               </div>
             </div>
 
             <p className="text-xs text-slate-500 text-center leading-relaxed">
               By signing in, you agree to our Terms of Service and Privacy Policy.
-              QUALNEX uses OAuth to securely access your account without storing passwords.
+              QUALNEX uses Firebase Authentication to securely manage your account.
             </p>
           </div>
 

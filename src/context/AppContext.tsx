@@ -16,9 +16,17 @@ interface AppState {
   error: string | null;
 }
 
+interface FirebaseUserData {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL: string | null;
+  token: string;
+  provider: string;
+}
+
 interface AppContextType extends AppState {
-  login: (provider: 'google' | 'github') => Promise<void>;
-  handleOAuthCallback: (code: string, provider: string, state: string) => Promise<void>;
+  login: (userData: FirebaseUserData) => Promise<void>;
   logout: () => void;
   createProject: (project: Omit<Project, 'id' | 'createdAt' | 'status'>) => Promise<void>;
   startQARun: (projectId: string, config: any) => Promise<void>;
@@ -120,55 +128,48 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await loadAllData();
   }, []);
 
-  const login = useCallback(async (provider: 'google' | 'github') => {
+  const login = useCallback(async (userData: FirebaseUserData) => {
     try {
-      setState(prev => ({ ...prev, error: null }));
+      setState(prev => ({ ...prev, error: null, isLoading: true }));
       
-      // Get OAuth URL from backend
-      if (provider === 'google') {
-        const { url } = await apiClient.getGoogleAuthUrl();
-        window.location.href = url;
-      } else {
-        const { url } = await apiClient.getGitHubAuthUrl();
-        window.location.href = url;
-      }
-    } catch (err) {
-      const message = err instanceof ApiError ? err.message : 'Login failed';
-      setState(prev => ({ ...prev, error: message }));
-      throw err;
-    }
-  }, []);
-
-  const handleOAuthCallback = useCallback(async (code: string, provider: string, state: string) => {
-    try {
-      setState(prev => ({ ...prev, isLoading: true, error: null }));
+      // Store Firebase token for API calls
+      sessionStorage.setItem('qualnex_token', userData.token);
       
-      const result = await apiClient.authCallback(code, provider, state);
+      // Verify token with backend and get/create user
+      const backendUser = await apiClient.verifyFirebaseToken(userData.token, {
+        uid: userData.uid,
+        email: userData.email,
+        displayName: userData.displayName,
+        photoURL: userData.photoURL,
+        provider: userData.provider,
+      });
       
       setState(prev => ({
         ...prev,
         isAuthenticated: true,
         user: {
-          id: result.user.id,
-          email: result.user.email,
-          name: result.user.name || result.user.email,
-          role: 'owner',
-          organizationId: 'org_1',
-          createdAt: new Date().toISOString(),
+          id: backendUser.id || userData.uid,
+          email: userData.email || '',
+          name: userData.displayName || userData.email || 'User',
+          avatar: userData.photoURL || undefined,
+          role: backendUser.role || 'member',
+          organizationId: backendUser.organizationId || 'org_1',
+          createdAt: backendUser.createdAt || new Date().toISOString(),
         },
         organization: {
-          id: 'org_1',
-          name: result.user.organization || 'My Organization',
-          plan: 'pro',
+          id: backendUser.organizationId || 'org_1',
+          name: backendUser.organizationName || 'My Organization',
+          plan: backendUser.plan || 'free',
           createdAt: new Date().toISOString(),
         },
         isLoading: false,
       }));
-
+      
+      // Load user data
       await loadAllData();
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : 'Authentication failed';
-      setState(prev => ({ ...prev, isLoading: false, error: message }));
+      const message = err instanceof ApiError ? err.message : 'Login failed';
+      setState(prev => ({ ...prev, error: message, isLoading: false }));
       throw err;
     }
   }, []);
@@ -265,11 +266,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setState(prev => ({ ...prev, error: null }));
   }, []);
 
-  return (
+    return (
     <AppContext.Provider value={{
       ...state,
       login,
-      handleOAuthCallback,
       logout,
       createProject,
       startQARun,
@@ -279,8 +279,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }}>
       {children}
     </AppContext.Provider>
-  );
-}
+  );}
 
 export function useApp() {
   const context = useContext(AppContext);
