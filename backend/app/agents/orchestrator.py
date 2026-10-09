@@ -1,11 +1,13 @@
 """
-AI Agent Orchestration - Qwen Provider with Specialized Agents
+AI Agent Orchestration - DeepSeek Provider with Specialized Agents
+DeepSeek uses OpenAI-compatible API format
 """
 import json
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
+from openai import AsyncOpenAI
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -33,13 +35,27 @@ class AIProvider:
     ) -> AIResponse:
         raise NotImplementedError
 
-class QwenProvider(AIProvider):
-    """Qwen AI provider via DashScope API"""
+class DeepSeekProvider(AIProvider):
+    """
+    DeepSeek AI provider using OpenAI-compatible API.
+    
+    DeepSeek offers:
+    - deepseek-chat (DeepSeek-V3) - Fast, general purpose
+    - deepseek-reasoner (DeepSeek-R1) - Complex reasoning tasks
+    
+    Pricing (very affordable):
+    - ~$0.22 per 1M input tokens
+    - ~$0.28 per 1M output tokens
+    - 5M free tokens on signup
+    """
     
     def __init__(self):
-        self.api_key = settings.qwen_api_key
-        self.api_base = settings.qwen_api_base
-        self.model = settings.qwen_model
+        self.client = AsyncOpenAI(
+            api_key=settings.deepseek_api_key,
+            base_url=settings.deepseek_api_base,
+        )
+        self.model = settings.deepseek_model
+        self.reasoner_model = settings.deepseek_reasoner_model
     
     async def complete(
         self,
@@ -47,11 +63,10 @@ class QwenProvider(AIProvider):
         user_prompt: str,
         temperature: float = None,
         max_tokens: int = None,
-        response_format: str = None
+        response_format: str = None,
+        use_reasoner: bool = False
     ) -> AIResponse:
-        import httpx
         import time
-        
         start = time.time()
         
         messages = [
@@ -59,58 +74,46 @@ class QwenProvider(AIProvider):
             {"role": "user", "content": user_prompt},
         ]
         
-        if response_format:
-            messages.append({
-                "role": "system",
-                "content": f"Respond in this JSON format: {response_format}"
-            })
+        # Select model based on task complexity
+        model = self.reasoner_model if use_reasoner else self.model
         
-        async with httpx.AsyncClient(timeout=settings.ai_timeout_seconds) as client:
-            for attempt in range(settings.ai_max_retries):
-                try:
-                    response = await client.post(
-                        f"{self.api_base}/services/aigc/text-generation/generation",
-                        headers={
-                            "Authorization": f"Bearer {self.api_key}",
-                            "Content-Type": "application/json",
-                        },
-                        json={
-                            "model": self.model,
-                            "input": {"messages": messages},
-                            "parameters": {
-                                "temperature": temperature or settings.qwen_temperature,
-                                "max_tokens": max_tokens or settings.qwen_max_tokens,
-                                "result_format": "message",
-                            }
-                        }
-                    )
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        content = data["output"]["choices"][0]["message"]["content"]
-                        tokens = data.get("usage", {}).get("total_tokens", 0)
-                        latency = (time.time() - start) * 1000
-                        
-                        return AIResponse(
-                            content=content,
-                            model=self.model,
-                            tokens_used=tokens,
-                            latency_ms=latency
-                        )
-                    else:
-                        logger.warning(f"AI request failed (attempt {attempt + 1}): {response.status_code}")
-                        if attempt < settings.ai_max_retries - 1:
-                            await asyncio.sleep(2 ** attempt)
+        for attempt in range(settings.ai_max_retries):
+            try:
+                response = await self.client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature or settings.deepseek_temperature,
+                    max_tokens=max_tokens or settings.deepseek_max_tokens,
+                    response_format={"type": "json_object"} if response_format else None,
+                )
                 
-                except Exception as e:
-                    logger.error(f"AI request error (attempt {attempt + 1}): {e}")
-                    if attempt < settings.ai_max_retries - 1:
-                        await asyncio.sleep(2 ** attempt)
+                content = response.choices[0].message.content
+                tokens = response.usage.total_tokens if response.usage else 0
+                latency = (time.time() - start) * 1000
+                
+                logger.info(f"DeepSeek {model} completed: {tokens} tokens, {latency:.0f}ms")
+                
+                return AIResponse(
+                    content=content,
+                    model=model,
+                    tokens_used=tokens,
+                    latency_ms=latency
+                )
+            
+            except Exception as e:
+                logger.error(f"DeepSeek request error (attempt {attempt + 1}): {e}")
+                if attempt < settings.ai_max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
         
-        # Fallback model
-        logger.warning(f"Primary model {self.model} failed, trying fallback")
-        # ... fallback logic would go here
-        raise Exception("AI provider request failed after all retries")
+        # Fallback to standard model if reasoner fails
+        if use_reasoner:
+            logger.warning(f"Reasoner model failed, falling back to {self.model}")
+            return await self.complete(
+                system_prompt, user_prompt, temperature, max_tokens, response_format,
+                use_reasoner=False
+            )
+        
+        raise Exception("DeepSeek request failed after all retries")
 
 
 # ============ Agent Base ============
@@ -307,7 +310,7 @@ Return JSON array of findings:
             return {"findings": []}
 
 
-# ============ Validation Agent ============
+# ============ Validation Agent (uses reasoner for complex analysis) ============
 
 class ValidationAgent(BaseAgent):
     """Validates findings by attempting reproduction and evidence collection"""
@@ -344,10 +347,12 @@ Return JSON:
     "reproduced": true/false
 }}"""
         
+        # Use reasoner model for complex validation tasks
         response = await self.provider.complete(
             self.SYSTEM_PROMPT,
             self._sanitize_input(user_prompt),
-            response_format="validation"
+            response_format="validation",
+            use_reasoner=True
         )
         
         try:
@@ -440,10 +445,10 @@ Return JSON:
 # ============ Orchestrator ============
 
 class AgentOrchestrator:
-    """Central orchestration of all AI agents"""
+    """Central orchestration of all AI agents using DeepSeek"""
     
     def __init__(self):
-        self.provider = QwenProvider()
+        self.provider = DeepSeekProvider()
         self.discovery = DiscoveryAgent(self.provider)
         self.planning = PlanningAgent(self.provider)
         self.browser_qa = BrowserQAAgent(self.provider)

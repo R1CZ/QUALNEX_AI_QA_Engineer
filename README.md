@@ -89,11 +89,23 @@ QUALNEX uses **Firebase Authentication** which is **completely free** for up to 
 - ✅ Phone Auth (limited)
 - ✅ No credit card required
 
-### 2. AI Provider (Qwen)
+### 2. AI Provider (DeepSeek - Very Affordable)
 
-1. Sign up at [Alibaba Cloud DashScope](https://dashscope.console.aliyun.com/)
-2. Generate API key
-3. Add to `.env` as `QWEN_API_KEY`
+QUALNEX uses **DeepSeek** for AI-powered features - extremely cost-effective:
+
+**Quick Setup:**
+1. Go to [DeepSeek Platform](https://platform.deepseek.com/)
+2. Sign up (free - get 5M tokens)
+3. Generate API key
+4. Add to `backend/.env` as `DEEPSEEK_API_KEY`
+
+**Cost:**
+- ~$0.22 per 1M input tokens
+- ~$0.28 per 1M output tokens
+- **~$0.02 per QA run** (2 cents!)
+- **5M free tokens** on signup
+
+See **[DEEPSEEK_SETUP.md](DEEPSEEK_SETUP.md)** for detailed instructions and free alternatives (Ollama).
 
 ### 3. Security Keys
 
