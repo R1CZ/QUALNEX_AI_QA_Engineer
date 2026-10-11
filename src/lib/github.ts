@@ -5,7 +5,7 @@
  *  - Logged in with Google + manually connected GitHub (Repositories page)
  *  - Logged in directly with GitHub (provider already attached at auth time)
  */
-import { auth, isGitHubConnected, getGitHubAccessToken } from './firebase';
+import { auth, isGitHubConnected, getGitHubAccessToken, getGitHubLogin } from './firebase';
 import type { Repository } from '../types';
 
 export interface GitHubViewer {

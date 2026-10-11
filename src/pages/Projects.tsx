@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import {
   FolderKanban, Plus, Search, PlayCircle,
-  GitBranch, Clock, MoreVertical, Settings, Trash2
+  GitBranch, Clock, MoreVertical, Settings, Loader2, AlertCircle
 } from 'lucide-react';
-import { useApp } from '../context/AppContext';
+import { useApp, AI_MODELS } from '../context/AppContext';
 import QAConfigModal from '../components/QAConfigModal';
 
 export default function Projects() {
   const { projects, startQARun } = useApp();
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [qaConfigProject, setQaConfigProject] = useState<string | null>(null);
@@ -141,7 +143,10 @@ export default function Projects() {
 
       {/* Create Modal */}
       {showCreateModal && (
-        <CreateProjectModal onClose={() => setShowCreateModal(false)} />
+        <CreateProjectModal
+          onClose={() => setShowCreateModal(false)}
+          onStarted={() => { setShowCreateModal(false); navigate('/app/qa-runs'); }}
+        />
       )}
 
       {/* QA Config Modal */}
@@ -161,25 +166,30 @@ export default function Projects() {
   );
 }
 
-function CreateProjectModal({ onClose }: { onClose: () => void }) {
-  const { createProject } = useApp();
+function CreateProjectModal({ onClose, onStarted }: { onClose: () => void; onStarted: () => void }) {
+  const { repositories, createProject, startQARun } = useApp();
   const [name, setName] = useState('');
-  const [repository, setRepository] = useState('');
-  const [branch, setBranch] = useState('main');
-  const [buildCommand, setBuildCommand] = useState('npm run build');
-  const [startCommand, setStartCommand] = useState('npm start');
+  const [repositoryId, setRepositoryId] = useState('');
+  const [aiModel, setAiModel] = useState(AI_MODELS[0].id);
+  const [submitting, setSubmitting] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
 
-  const handleCreate = () => {
-    if (!name || !repository) return;
-    createProject({
-      name,
-      repositoryId: 'repo_1',
-      repository,
-      branch,
-      buildCommand,
-      startCommand,
-    });
-    onClose();
+  const handleStartTesting = async () => {
+    if (!name.trim() || !repositoryId || submitting) return;
+    setSubmitting(true);
+    setLocalError(null);
+    try {
+      // 1. Create the project bound to the selected repository + AI model.
+      const project = await createProject({ name: name.trim(), repositoryId, aiModel });
+      // 2. Immediately begin the automated AI testing/scanning process —
+      //    this creates the QA run and updates the QA Runs badge.
+      await startQARun(project.id, undefined, aiModel);
+      // 3. Hand off to the QA Runs section to monitor execution/results.
+      onStarted();
+    } catch (err: any) {
+      setLocalError(err?.message || 'Failed to start testing. Please try again.');
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -190,8 +200,16 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
         animate={{ opacity: 1, scale: 1 }}
         className="relative w-full max-w-lg glass-card rounded-xl p-6"
       >
-        <h2 className="text-xl font-bold text-white mb-6">Create QA Project</h2>
-        
+        <h2 className="text-xl font-bold text-white mb-1">New Project</h2>
+        <p className="text-sm text-slate-400 mb-6">Create a project and start AI testing in one step.</p>
+
+        {localError && (
+          <div className="mb-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-rose-400">{localError}</p>
+          </div>
+        )}
+
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1.5">Project Name</label>
@@ -203,60 +221,69 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
               className="w-full px-3 py-2.5 bg-navy-800 border border-navy-700 rounded-lg text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500/50"
             />
           </div>
+
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1.5">Repository</label>
-            <input
-              type="text"
-              value={repository}
-              onChange={e => setRepository(e.target.value)}
-              placeholder="owner/repo"
-              className="w-full px-3 py-2.5 bg-navy-800 border border-navy-700 rounded-lg text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500/50"
-            />
+            {repositories.length === 0 ? (
+              <div className="w-full px-3 py-2.5 bg-navy-800/60 border border-navy-700 rounded-lg text-sm text-slate-500">
+                No GitHub repositories available yet — connect your GitHub account in{' '}
+                <a href="/app/repositories" className="text-cyan-400 hover:text-cyan-300 underline">Repositories</a>{' '}
+                first.
+              </div>
+            ) : (
+              <select
+                value={repositoryId}
+                onChange={e => setRepositoryId(e.target.value)}
+                className="w-full px-3 py-2.5 bg-navy-800 border border-navy-700 rounded-lg text-sm text-white focus:outline-none focus:border-cyan-500/50"
+              >
+                <option value="">Select a repository...</option>
+                {repositories.map(repo => (
+                  <option key={repo.id} value={repo.id}>
+                    {repo.fullName}{repo.language ? ` · ${repo.language}` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Branch</label>
-              <input
-                type="text"
-                value={branch}
-                onChange={e => setBranch(e.target.value)}
-                className="w-full px-3 py-2.5 bg-navy-800 border border-navy-700 rounded-lg text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500/50"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Build Command</label>
-              <input
-                type="text"
-                value={buildCommand}
-                onChange={e => setBuildCommand(e.target.value)}
-                className="w-full px-3 py-2.5 bg-navy-800 border border-navy-700 rounded-lg text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500/50"
-              />
-            </div>
-          </div>
+
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Start Command</label>
-            <input
-              type="text"
-              value={startCommand}
-              onChange={e => setStartCommand(e.target.value)}
-              className="w-full px-3 py-2.5 bg-navy-800 border border-navy-700 rounded-lg text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500/50"
-            />
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">AI Model</label>
+            <select
+              value={aiModel}
+              onChange={e => setAiModel(e.target.value)}
+              className="w-full px-3 py-2.5 bg-navy-800 border border-navy-700 rounded-lg text-sm text-white focus:outline-none focus:border-cyan-500/50"
+            >
+              {AI_MODELS.map(model => (
+                <option key={model.id} value={model.id}>{model.label}</option>
+              ))}
+            </select>
           </div>
         </div>
 
         <div className="flex gap-3 mt-6">
           <button
             onClick={onClose}
-            className="flex-1 px-4 py-2.5 border border-navy-600 text-slate-300 hover:text-white rounded-lg text-sm font-medium transition-colors"
+            disabled={submitting}
+            className="flex-1 px-4 py-2.5 border border-navy-600 text-slate-300 hover:text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
           >
             Cancel
           </button>
           <button
-            onClick={handleCreate}
-            disabled={!name || !repository}
-            className="flex-1 px-4 py-2.5 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 disabled:cursor-not-allowed text-navy-950 rounded-lg text-sm font-medium transition-colors"
+            onClick={handleStartTesting}
+            disabled={!name.trim() || !repositoryId || submitting}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 disabled:cursor-not-allowed text-navy-950 rounded-lg text-sm font-medium transition-colors"
           >
-            Create Project
+            {submitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Starting...
+              </>
+            ) : (
+              <>
+                <PlayCircle className="w-4 h-4" />
+                Start Testing
+              </>
+            )}
           </button>
         </div>
       </motion.div>

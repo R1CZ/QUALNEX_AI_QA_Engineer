@@ -63,6 +63,20 @@ async def verify_firebase_token(id_token: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _serialize(value: Any) -> Any:
+    """JSON-safe value (SQLAlchemy/Python enums are not JSON serializable)."""
+    if value is None:
+        return None
+    # str-based Enums must be converted to their plain string value,
+    # otherwise FastAPI's jsonable_encoder raises "Object of type UserRole
+    # is not JSON serializable" and login fails with a 500.
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if hasattr(value, 'value') and not isinstance(value, (str, int, float, bool, dict, list)):
+        return value.value
+    return str(value) if not isinstance(value, (str, int, float, bool, dict, list)) else value
+
+
 async def get_or_create_user(firebase_user: Dict[str, Any]) -> Dict[str, Any]:
     """
     Get existing user or create new one from Firebase user data.
@@ -88,27 +102,36 @@ async def get_or_create_user(firebase_user: Dict[str, Any]) -> Dict[str, Any]:
             # Update last login
             user.last_login_at = datetime.utcnow()
             await db.commit()
+            org_name = None
+            if user.organization:
+                org_name = user.organization.name
             return {
-                'id': user.id,
+                'id': _serialize(user.id),
                 'email': user.email,
                 'name': user.name,
-                'role': user.role,
-                'organizationId': user.organization_id,
-                'createdAt': user.created_at.isoformat(),
+                'organizationId': _serialize(user.organization_id),
+                'organizationName': org_name,
+                'createdAt': user.created_at.isoformat() if user.created_at else None,
             }
         
-        # Create new user
-        # For now, create a default organization
-        from app.models.organization import Organization
+        # Create new user. Reuse the first existing organization when one
+        # is present so all users in this deployment share one tenant;
+        # otherwise create a default organization.
+        from app.models.models import Organization
         from uuid import uuid4
         
-        org = Organization(
-            id=uuid4(),
-            name='My Organization',
-            plan='free',
-            created_at=datetime.utcnow()
-        )
-        db.add(org)
+        org_result = await db.execute(select(Organization).order_by(Organization.created_at).limit(1))
+        org = org_result.scalar_one_or_none()
+        created_new_org = False
+        if org is None:
+            org = Organization(
+                id=uuid4(),
+                name='My Organization',
+                plan='free',
+                created_at=datetime.utcnow()
+            )
+            db.add(org)
+            created_new_org = True
         await db.flush()
         
         user = User(
@@ -117,7 +140,6 @@ async def get_or_create_user(firebase_user: Dict[str, Any]) -> Dict[str, Any]:
             email=firebase_user['email'],
             name=firebase_user['display_name'] or firebase_user['email'],
             avatar_url=firebase_user['photo_url'],
-            role='owner',  # First user is owner
             organization_id=org.id,
             provider=firebase_user['provider'],
             created_at=datetime.utcnow(),
@@ -127,12 +149,11 @@ async def get_or_create_user(firebase_user: Dict[str, Any]) -> Dict[str, Any]:
         await db.commit()
         
         return {
-            'id': user.id,
+            'id': _serialize(user.id),
             'email': user.email,
             'name': user.name,
-            'role': user.role,
-            'organizationId': user.organization_id,
+            'organizationId': _serialize(org.id),
             'organizationName': org.name,
             'plan': org.plan,
-            'createdAt': user.created_at.isoformat(),
+            'createdAt': user.created_at.isoformat() if user.created_at else None,
         }

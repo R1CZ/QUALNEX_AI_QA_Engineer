@@ -51,6 +51,10 @@ export interface Project {
   /** AI model used for testing/scanning (e.g. "deepseek-chat"). */
   aiModel?: string;
   status: 'active' | 'paused' | 'error';
+  /** Saved QA scope from the Configure step — Run QA uses this config. */
+  qaConfig?: QAConfig;
+  /** True once the user has saved a configuration via the Configure button. */
+  configured?: boolean;
   lastRunAt?: string;
   createdAt: string;
 }
