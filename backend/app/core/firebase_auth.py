@@ -88,7 +88,7 @@ async def get_or_create_user(firebase_user: Dict[str, Any]) -> Dict[str, Any]:
         User dict with backend user data
     """
     from app.db.session import AsyncSessionLocal
-    from app.models.models import User
+    from app.models.models import User, UserRole
     from sqlalchemy import select
     
     async with AsyncSessionLocal() as db:
@@ -133,6 +133,11 @@ async def get_or_create_user(firebase_user: Dict[str, Any]) -> Dict[str, Any]:
             db.add(org)
             created_new_org = True
         await db.flush()
+        
+        try:
+            role = UserRole.MEMBER
+        except ValueError:
+            role = 'member'
         
         user = User(
             id=uuid4(),
