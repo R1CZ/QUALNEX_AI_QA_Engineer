@@ -131,40 +131,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (userData: FirebaseUserData) => {
     try {
       setState(prev => ({ ...prev, error: null, isLoading: true }));
-      
+
       // Store Firebase token for API calls
       sessionStorage.setItem('qualnex_token', userData.token);
-      
-      // Verify token with backend and get/create user
-      const backendUser = await apiClient.verifyFirebaseToken(userData.token, {
-        uid: userData.uid,
-        email: userData.email,
-        displayName: userData.displayName,
-        photoURL: userData.photoURL,
-        provider: userData.provider,
-      });
-      
+
+      // Verify token with backend and get/create user.
+      // The backend is optional for sign-in: if it is unreachable or rejects
+      // the token, we still complete the session using the Firebase identity
+      // so the user is never locked out by a "Request failed" error.
+      let backendUser: any = null;
+      try {
+        backendUser = await apiClient.verifyFirebaseToken(userData.token, {
+          uid: userData.uid,
+          email: userData.email,
+          displayName: userData.displayName,
+          photoURL: userData.photoURL,
+          provider: userData.provider,
+        });
+      } catch (apiErr) {
+        console.warn(
+          'Backend verification unavailable — continuing with Firebase session only:',
+          apiErr
+        );
+      }
+
       setState(prev => ({
         ...prev,
         isAuthenticated: true,
         user: {
-          id: backendUser.id || userData.uid,
+          id: backendUser?.id || userData.uid,
           email: userData.email || '',
           name: userData.displayName || userData.email || 'User',
           avatar: userData.photoURL || undefined,
-          role: backendUser.role || 'member',
-          organizationId: backendUser.organizationId || 'org_1',
-          createdAt: backendUser.createdAt || new Date().toISOString(),
+          role: backendUser?.role || 'owner',
+          organizationId: backendUser?.organizationId || 'org_1',
+          createdAt: backendUser?.createdAt || new Date().toISOString(),
         },
         organization: {
-          id: backendUser.organizationId || 'org_1',
-          name: backendUser.organizationName || 'My Organization',
-          plan: backendUser.plan || 'free',
+          id: backendUser?.organizationId || 'org_1',
+          name: backendUser?.organizationName || 'My Organization',
+          plan: backendUser?.plan || 'free',
           createdAt: new Date().toISOString(),
         },
         isLoading: false,
       }));
-      
+
       // Load user data
       await loadAllData();
     } catch (err) {

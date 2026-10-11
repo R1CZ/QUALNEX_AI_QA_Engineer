@@ -1,13 +1,24 @@
-export type UserRole = 'owner' | 'admin' | 'member' | 'viewer';
+// NOTE: Role-based access control (Owner/Admin/Member/Viewer) has been removed
+// from QUALNEX until it is actually implemented. Every authenticated user has
+// full access to their own organization's data.
+
+export interface GitHubAccount {
+  login: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+  connectedAt: string;
+}
 
 export interface User {
   id: string;
   email: string;
   name: string;
   avatar?: string;
-  role: UserRole;
   organizationId: string;
   createdAt: string;
+  /** Present when the user signed in (or linked) with GitHub — the GitHub
+   * account is then already authorized for repository access. */
+  githubAccount?: GitHubAccount | null;
 }
 
 export interface Organization {
@@ -37,6 +48,8 @@ export interface Project {
   branch: string;
   buildCommand: string;
   startCommand: string;
+  /** AI model used for testing/scanning (e.g. "deepseek-chat"). */
+  aiModel?: string;
   status: 'active' | 'paused' | 'error';
   lastRunAt?: string;
   createdAt: string;
@@ -62,6 +75,10 @@ export interface QARun {
   startedAt: string;
   completedAt?: string;
   config: QAConfig;
+  /** AI model performing the testing/scanning for this run. */
+  aiModel?: string;
+  /** Set when the run failed — surfaced in the QA Runs UI. */
+  errorMessage?: string;
 }
 
 export interface QAConfig {
