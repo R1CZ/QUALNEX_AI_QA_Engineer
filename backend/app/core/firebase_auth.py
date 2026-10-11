@@ -1,173 +1,242 @@
+
 """
 Firebase Authentication for Backend
-Verifies Firebase ID tokens and manages user sessions
+Verifies Firebase ID tokens and manages user sessions.
 """
+
 import firebase_admin
 from firebase_admin import auth, credentials
 from typing import Optional, Dict, Any
 from datetime import datetime
+from enum import Enum as PyEnum
+
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
 from app.config import settings
 
-# Initialize Firebase Admin SDK
-# In production, use service account JSON file
+
+# ============================================================
+# Firebase Admin SDK Initialization
+# ============================================================
+
 if not firebase_admin._apps:
     if settings.firebase_service_account_key:
-        # Production: use service account
-        cred = credentials.Certificate(settings.firebase_service_account_key)
+        # Use the configured service-account JSON file or credential data.
+        cred = credentials.Certificate(
+            settings.firebase_service_account_key
+        )
         firebase_admin.initialize_app(cred)
     else:
-        # Development: use default credentials
+        # Development: attempt to use Application Default Credentials.
         try:
             firebase_admin.initialize_app()
         except Exception:
-            # If no credentials available, skip Firebase init
+            # Token verification will report the missing initialization.
             pass
 
 
-async def verify_firebase_token(id_token: str) -> Optional[Dict[str, Any]]:
+# ============================================================
+# Firebase Token Verification
+# ============================================================
+
+async def verify_firebase_token(
+    id_token: str,
+) -> Optional[Dict[str, Any]]:
     """
-    Verify a Firebase ID token and return user info.
-    
+    Verify a Firebase ID token and return the corresponding user data.
+
     Args:
-        id_token: Firebase ID token from client
-        
+        id_token: Firebase ID token received from the frontend.
+
     Returns:
-        User info dict or None if invalid
+        A dictionary containing verified Firebase user information,
+        or None if verification fails.
     """
     try:
         if not firebase_admin._apps:
-            # Firebase Admin was never initialized (no service account /
-            # default credentials). Fail with a clear message instead of an
-            # opaque error that surfaces as "Request failed" in the UI.
             raise RuntimeError(
-                'Firebase Admin SDK is not initialized. Set FIREBASE_SERVICE_ACCOUNT_KEY '
-                '(path to a service account JSON) in backend/.env.'
+                "Firebase Admin SDK is not initialized. Configure "
+                "FIREBASE_SERVICE_ACCOUNT_KEY in backend/.env."
             )
 
-        # Verify the token
         decoded_token = auth.verify_id_token(id_token)
-        
-        # Get user info
-        user = auth.get_user(decoded_token['uid'])
-        
+        user = auth.get_user(decoded_token["uid"])
+
         return {
-            'uid': user.uid,
-            'email': user.email,
-            'display_name': user.display_name,
-            'photo_url': user.photo_url,
-            'provider': decoded_token.get('firebase', {}).get('sign_in_provider', 'unknown'),
-            'email_verified': user.email_verified,
+            "uid": user.uid,
+            "email": user.email,
+            "display_name": user.display_name,
+            "photo_url": user.photo_url,
+            "provider": decoded_token.get("firebase", {}).get(
+                "sign_in_provider", "unknown"
+            ),
+            "email_verified": user.email_verified,
         }
-    except Exception as e:
-        print(f"Firebase token verification failed: {e}")
+
+    except Exception as exc:
+        print(f"Firebase token verification failed: {exc}")
         return None
 
+
+# ============================================================
+# Serialization Helpers
+# ============================================================
 
 def _serialize(value: Any) -> Any:
-    """JSON-safe value (SQLAlchemy/Python enums are not JSON serializable)."""
+    """Convert database values into JSON-safe values."""
+
     if value is None:
         return None
-    # str-based Enums must be converted to their plain string value,
-    # otherwise FastAPI's jsonable_encoder raises "Object of type UserRole
-    # is not JSON serializable" and login fails with a 500.
+
     if isinstance(value, datetime):
         return value.isoformat()
-    if hasattr(value, 'value') and not isinstance(value, (str, int, float, bool, dict, list)):
+
+    # Check Enum before str because UserRole inherits from str.
+    if isinstance(value, PyEnum):
         return value.value
-    return str(value) if not isinstance(value, (str, int, float, bool, dict, list)) else value
+
+    if isinstance(value, (str, int, float, bool, dict, list)):
+        return value
+
+    # Handles values such as SQLAlchemy UUID objects.
+    return str(value)
 
 
-async def get_or_create_user(firebase_user: Dict[str, Any]) -> Dict[str, Any]:
+# ============================================================
+# Get or Create Application User
+# ============================================================
+
+async def get_or_create_user(
+    firebase_user: Dict[str, Any],
+) -> Dict[str, Any]:
     """
-    Get existing user or create new one from Firebase user data.
-    
-    Args:
-        firebase_user: User info from Firebase
-        
-    Returns:
-        User dict with backend user data
+    Retrieve an existing application user or create one from
+    verified Firebase user information.
+
+    Existing users retain their current organization and role.
+
+    For new users, reuse the earliest existing organization when
+    one exists. Otherwise, create a default organization.
     """
+
     from app.db.session import AsyncSessionLocal
-    from app.models.models import User, UserRole
-    from sqlalchemy import select
-    
-    async with AsyncSessionLocal() as db:
-        # Try to find existing user by Firebase UID
-        result = await db.execute(
-            select(User).where(User.firebase_uid == firebase_user['uid'])
+    from app.models.models import User, UserRole, Organization
+    from uuid import uuid4
+
+    firebase_uid = firebase_user["uid"]
+    email = firebase_user.get("email")
+
+    if not email:
+        raise ValueError(
+            "The authenticated Firebase account does not have an email. "
+            "Please use an account with an available email address."
         )
+
+    async with AsyncSessionLocal() as db:
+
+        # ----------------------------------------------------
+        # Find an existing user by Firebase UID.
+        # Eager-load organization to avoid async lazy-loading errors.
+        # ----------------------------------------------------
+
+        result = await db.execute(
+            select(User)
+            .options(selectinload(User.organization))
+            .where(User.firebase_uid == firebase_uid)
+        )
+
         user = result.scalar_one_or_none()
-        
+
         if user:
-            # Update last login
             user.last_login_at = datetime.utcnow()
+
             await db.commit()
-            org_name = None
-            if user.organization:
-                org_name = user.organization.name
+
+            organization = user.organization
+
             return {
-                'id': _serialize(user.id),
-                'email': user.email,
-                'name': user.name,
-                'role': _serialize(user.role),
-                'organizationId': _serialize(user.organization_id),
-                'organizationName': org_name,
-                'createdAt': user.created_at.isoformat() if user.created_at else None,
+                "id": _serialize(user.id),
+                "email": user.email,
+                "name": user.name,
+                "role": _serialize(user.role),
+                "organizationId": _serialize(user.organization_id),
+                "organizationName": (
+                    organization.name if organization else None
+                ),
+                "plan": organization.plan if organization else None,
+                "createdAt": (
+                    user.created_at.isoformat()
+                    if user.created_at
+                    else None
+                ),
             }
-        
-<<<<<<< Updated upstream
-        # Create new user. Reuse the first existing organization when one
-        # is present so all users in this deployment share one tenant;
-        # otherwise create a default organization.
-        from app.models.organization import Organization
-=======
-        # Create new user
-        # For now, create a default organization
-        from app.models.models import Organization
->>>>>>> Stashed changes
-        from uuid import uuid4
-        
-        org_result = await db.execute(select(Organization).order_by(Organization.created_at).limit(1))
-        org = org_result.scalar_one_or_none()
-        created_new_org = False
-        if org is None:
-            org = Organization(
+
+        # ----------------------------------------------------
+        # Create a user.
+        #
+        # Reuse the earliest existing organization when one
+        # exists; otherwise, create a default organization.
+        # ----------------------------------------------------
+
+        org_result = await db.execute(
+            select(Organization)
+            .order_by(Organization.created_at)
+            .limit(1)
+        )
+
+        organization = org_result.scalar_one_or_none()
+
+        if organization is None:
+            organization = Organization(
                 id=uuid4(),
-                name='My Organization',
-                plan='free',
-                created_at=datetime.utcnow()
+                name="My Organization",
+                plan="free",
+                created_at=datetime.utcnow(),
             )
-            db.add(org)
-            created_new_org = True
-        await db.flush()
-        
-        try:
-            role = UserRole.MEMBER
-        except ValueError:
-            role = 'member'
-        
+
+            db.add(organization)
+            await db.flush()
+
+        # ----------------------------------------------------
+        # Create the application user.
+        # ----------------------------------------------------
+
+        role = UserRole.MEMBER
+
         user = User(
             id=uuid4(),
-            firebase_uid=firebase_user['uid'],
-            email=firebase_user['email'],
-            name=firebase_user['display_name'] or firebase_user['email'],
-            avatar_url=firebase_user['photo_url'],
+            firebase_uid=firebase_uid,
+            email=email,
+            name=(
+                firebase_user.get("display_name")
+                or email
+            ),
+            avatar_url=firebase_user.get("photo_url"),
+            organization_id=organization.id,
             role=role,
-            organization_id=org.id,
-            provider=firebase_user['provider'],
+            provider=firebase_user.get("provider", "unknown"),
             created_at=datetime.utcnow(),
-            last_login_at=datetime.utcnow()
+            last_login_at=datetime.utcnow(),
         )
+
         db.add(user)
         await db.commit()
-        
+
+        # Ensure generated and persisted values are available.
+        await db.refresh(user)
+
         return {
-            'id': _serialize(user.id),
-            'email': user.email,
-            'name': user.name,
-            'role': _serialize(role),
-            'organizationId': _serialize(org.id),
-            'organizationName': org.name,
-            'plan': org.plan,
-            'createdAt': user.created_at.isoformat() if user.created_at else None,
+            "id": _serialize(user.id),
+            "email": user.email,
+            "name": user.name,
+            "role": _serialize(user.role),
+            "organizationId": _serialize(user.organization_id),
+            "organizationName": organization.name,
+            "plan": organization.plan,
+            "createdAt": (
+                user.created_at.isoformat()
+                if user.created_at
+                else None
+            ),
         }
