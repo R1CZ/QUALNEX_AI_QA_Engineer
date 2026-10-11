@@ -122,6 +122,7 @@ class ApiClient {
     branch?: string;
     build_command?: string;
     start_command?: string;
+    ai_model?: string;
   }) {
     return this.request<any>('POST', '/v1/projects', data);
   }

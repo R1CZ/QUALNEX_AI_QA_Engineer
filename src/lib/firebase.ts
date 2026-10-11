@@ -366,7 +366,23 @@ export async function signInWithGitHub() {
 
       if (methods.includes('google.com')) {
         try {
-          const result = await signInWithPopup(auth, googleProvider);
+          let result;
+          try {
+            result = await signInWithPopup(auth, googleProvider);
+          } catch (popupErr: any) {
+            if (
+              popupErr?.code === 'auth/popup-blocked' ||
+              popupErr?.code === 'auth/operation-not-supported-in-environment' ||
+              popupErr?.code === 'auth/cancelled-popup-request'
+            ) {
+              // Popups unavailable — finish via redirect flow on next page
+              // load. handlePendingRedirect() completes the deferred GitHub
+              // link automatically when the page returns from Google.
+              await signInWithRedirect(auth, googleProvider);
+              return null;
+            }
+            throw popupErr;
+          }
           // Sign-in with the original provider succeeded — link GitHub to it
           // now so both methods resolve to this one account.
           const linked = await linkGitHubIfPending(result.user);
