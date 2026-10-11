@@ -1,4 +1,24 @@
+
+# Python generated files
 __pycache__/
-*.pyc
+*.py[cod]
+
+# Frontend build output
 dist/
-.env
+
+# Local environment secrets
+/.env
+**/.env
+**/.env.*
+!**/.env.example
+/backend/.env
+
+# Google service-account credentials
+/backend/serviceAccountKey.json
+**/serviceAccountKey*.json
+**/firebase-adminsdk*.json
+**/*service-account*.json
+
+# Private keys
+*.pem
+*.key
