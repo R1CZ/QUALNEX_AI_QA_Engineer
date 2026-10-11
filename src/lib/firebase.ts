@@ -23,6 +23,7 @@ import {
   signInWithPopup, 
   signInWithRedirect, 
   linkWithPopup,
+  linkWithRedirect,
   getRedirectResult,
   GoogleAuthProvider, 
   GithubAuthProvider,
@@ -75,11 +76,107 @@ githubProvider.addScope('read:user');
 githubProvider.addScope('user:email');
 githubProvider.addScope('repo');
 
+/** Session key holding the OAuth parameters of a GitHub sign-in that hit an
+ * "account exists with different credential" conflict. After the user signs
+ * in with their original provider we rebuild a GithubAuthProvider from these
+ * params so linkWithPopup()/linkWithRedirect() does NOT require re-consent. */
+const PENDING_LINK_KEY = 'qualnex_pending_github_link';
+
 function ensureConfigured() {
   if (!isFirebaseConfigured()) {
     throw new Error(
       'Firebase is not configured yet. Copy .env.example to .env and set your VITE_FIREBASE_* values (see FIREBASE_SETUP.md).'
     );
+  }
+}
+
+/**
+ * Build a GithubAuthProvider pre-loaded with the OAuth code/verifier saved
+ * during a conflicted sign-in attempt, so linking completes without asking
+ * the user for GitHub consent a second time.
+ */
+function providerFromPending(params: Record<string, string>): GithubAuthProvider {
+  const provider = new GithubAuthProvider();
+  provider.addScope('read:user');
+  provider.addScope('user:email');
+  provider.addScope('repo');
+  const creds = GithubAuthProvider.credentialFromJSON({
+    accessToken: '',
+    ...params,
+  } as any);
+  if (creds) provider.addCredential(creds);
+  return provider;
+}
+
+function savePendingGitHubLink(error: any) {
+  try {
+    // Firebase exposes the raw OAuth response (code / state / client_id /
+    // redirect_uri / scopes) on the error's custom OAuth credential. Storing
+    // it lets us finish the link after the user signs in with Google.
+    const resp: any = error?.customData?.oauthResponse || {};
+    const clientId: string | undefined =
+      resp?.clientId ??
+      ((auth as any)?.config?.clientId as string | undefined);
+    if (resp?.code && clientId) {
+      sessionStorage.setItem(
+        PENDING_LINK_KEY,
+        JSON.stringify({
+          code: resp.code,
+          state: resp.state || '',
+          sessionUri: resp.sessionUri || '',
+          codeVerifier: resp.codeVerifier || '',
+          clientId,
+          redirectUri: resp.redirectUrl || resp.redirectURL || window.location.origin,
+          scopes: resp.scopes || ['read:user', 'user:email', 'repo'],
+        })
+      );
+    } else {
+      // No reusable credential available — fall back to re-running the flow.
+      sessionStorage.setItem(PENDING_LINK_KEY, '1');
+    }
+  } catch { /* sessionStorage may be unavailable */ }
+}
+
+function readPendingGitHubLink(): string | null {
+  try {
+    return sessionStorage.getItem(PENDING_LINK_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when the current Firebase account already has GitHub linked.
+ */
+export function isGitHubConnected(user: FirebaseUser | null = auth.currentUser): boolean {
+  return !!user && user.providerData.some((p) => p.providerId === 'github.com');
+}
+
+/**
+ * Extract the GitHub username from a credential/user (for display & repo fetch).
+ */
+export function getGitHubLogin(user: FirebaseUser): string | null {
+  const gh = user.providerData.find((p) => p.providerId === 'github.com') as any;
+  return gh?.username || user.displayName || null;
+}
+
+/**
+ * Get a fresh GitHub OAuth access token for the signed-in user.
+ * Requires the GitHub provider to be linked (via login or account linking).
+ * Used by the Repositories page to list the user's repositories directly
+ * from the GitHub API.
+ */
+export async function getGitHubAccessToken(): Promise<string | null> {
+  const user = auth.currentUser;
+  if (!user || !isGitHubConnected(user)) return null;
+  try {
+    const cred = await user.getTokenResult(GithubAuthProvider.PROVIDER_ID);
+    return cred?.accessToken || null;
+  } catch (err: any) {
+    // Token result may be missing after a deferred link; re-run a silent
+    // popup link only if truly necessary — otherwise report not connected.
+    console.warn('Could not retrieve GitHub access token:', err?.code, err?.message);
+    return null;
   }
 }
 
@@ -151,18 +248,16 @@ export async function signInWithGitHub() {
       return null; // page is navigating away
     }
     if (error?.code === 'auth/account-exists-with-different-credential') {
-      // Email already used by another provider (e.g. Google).
-      // Remember that the user wants GitHub linked; after they sign in with
-      // the original provider, linkGitHubIfPending() re-runs the GitHub
-      // flow so both providers end up on one account.
-      try {
-        sessionStorage.setItem('qualnex_pending_github_link', '1');
-      } catch { /* sessionStorage may be unavailable */ }
+      // Email already used by another provider (e.g. Google). This is NOT a
+      // dead-end: save the OAuth parameters from the failed attempt so that,
+      // after the user signs in with their original provider, GitHub can be
+      // LINKED to the same account without re-consent.
+      savePendingGitHubLink(error);
       const providedEmail: string | undefined = error?.customData?.email;
       const methods: string[] = error?.customData?._methods || [];
       const hint = methods.includes('google.com')
-        ? 'Sign in with Google first — your GitHub account will then be linked automatically.'
-        : `Sign in with one of your existing methods (${methods.join(', ') || 'Google'}) first — GitHub will then be linked automatically.`;
+        ? 'Sign in with Google — your GitHub account will then be linked automatically.'
+        : `Sign in with one of your existing methods (${methods.join(', ') || 'Google'}) — GitHub will then be linked automatically.`;
       throw new Error(
         `This email (${providedEmail || 'your email'}) is already registered with another sign-in method. ${hint}`
       );
@@ -173,35 +268,107 @@ export async function signInWithGitHub() {
 }
 
 /**
+ * Explicitly connect the user's GitHub account to the currently signed-in
+ * Firebase account (used by the Repositories page when logged in via Google).
+ * Reuses the saved OAuth parameters from a conflicted sign-in when available
+ * so the user does not have to consent twice; otherwise runs a normal
+ * consent popup. Throws on failure so the UI can show the reason.
+ */
+export async function connectGitHubAccount(): Promise<void> {
+  ensureConfigured();
+  const user = auth.currentUser;
+  if (!user) throw new Error('You must be signed in to connect GitHub.');
+  if (isGitHubConnected(user)) return;
+
+  const pending = readPendingGitHubLink();
+  let params: Record<string, any> | null = null;
+  if (pending && pending !== '1') {
+    try { params = JSON.parse(pending); } catch { params = null; }
+  }
+
+  try {
+    if (params?.code) {
+      // Finish the interrupted authorization silently (no GitHub consent).
+      await linkWithPopup(user, providerFromPending(params));
+    } else {
+      await linkWithPopup(user, githubProvider);
+    }
+  } catch (err: any) {
+    if (
+      err?.code === 'auth/popup-blocked' ||
+      err?.code === 'auth/operation-not-supported-in-environment' ||
+      err?.code === 'auth/cancelled-popup-request'
+    ) {
+      // Fall back to redirect; handlePendingRedirect() completes the link.
+      await linkWithRedirect(user, params?.code ? providerFromPending(params) : githubProvider);
+      return; // page is navigating away
+    }
+    if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/user-cancelled-flow-navigation') {
+      throw new Error('GitHub authorization was cancelled.');
+    }
+    if (err?.code === 'auth/account-exists-with-different-credential') {
+      throw new Error('This GitHub account is already linked to a different QUALNEX account.');
+    }
+    console.error('GitHub linking error:', err);
+    throw new Error(getAuthErrorMessage(err?.code, err?.message));
+  }
+
+  clearPendingGitHubLink();
+}
+
+function clearPendingGitHubLink() {
+  try { sessionStorage.removeItem(PENDING_LINK_KEY); } catch { /* ignore */ }
+}
+
+/**
  * After a successful sign-in with the "original" provider, check whether a
  * GitHub linking was interrupted by an account-exists error and complete it
- * now (linkWithPopup opens the GitHub consent screen again and attaches the
- * GitHub identity to the currently signed-in Firebase account).
- * This prevents the permanent "different credentials" dead-end.
+ * now. When the saved OAuth parameters are available this happens WITHOUT a
+ * second GitHub consent prompt; otherwise linkGitHubExplicitly() can be used
+ * from the Repositories page.
  */
-export async function linkGitHubIfPending(): Promise<void> {
-  let pending: string | null = null;
-  try {
-    pending = sessionStorage.getItem('qualnex_pending_github_link');
-  } catch {
-    return;
+export async function linkGitHubIfPending(): Promise<boolean> {
+  const pending = readPendingGitHubLink();
+  if (!pending) return false;
+  clearPendingGitHubLink();
+  const user = auth.currentUser;
+  if (!user) return false;
+  // Skip if GitHub is already linked
+  if (isGitHubConnected(user)) return true;
+
+  let params: Record<string, any> | null = null;
+  if (pending !== '1') {
+    try { params = JSON.parse(pending); } catch { params = null; }
   }
-  if (!pending) return;
+
   try {
-    sessionStorage.removeItem('qualnex_pending_github_link');
-    const user = auth.currentUser;
-    if (!user) return;
-    // Skip if GitHub is already linked
-    if (user.providerData.some((p) => p.providerId === 'github.com')) return;
-    await linkWithPopup(user, githubProvider);
+    if (params?.code) {
+      await linkWithPopup(user, providerFromPending(params));
+    } else {
+      await linkWithPopup(user, githubProvider);
+    }
+    return true;
   } catch (err: any) {
-    // Non-fatal: the account still works with the primary provider.
+    if (
+      err?.code === 'auth/popup-blocked' ||
+      err?.code === 'auth/operation-not-supported-in-environment' ||
+      err?.code === 'auth/cancelled-popup-request'
+    ) {
+      // Defer: complete the link through a redirect on next page load.
+      try {
+        await linkWithRedirect(user, params?.code ? providerFromPending(params) : githubProvider);
+      } catch { /* page is navigating anyway */ }
+      return false;
+    }
+    // Non-fatal: the account still works with the primary provider and the
+    // Repositories page offers an explicit "Connect GitHub" action.
     console.warn('Deferred GitHub linking failed:', err?.code, err?.message);
+    return false;
   }
 }
 
 /**
- * Complete a redirect-based sign-in (called once on app load).
+ * Complete a redirect-based sign-in or link (called once on app load).
  * Returns the user payload if the page returned from an OAuth redirect.
  */
 export async function handlePendingRedirect() {
@@ -217,8 +384,19 @@ export async function handlePendingRedirect() {
       result.user.providerData.some((p) => p.providerId === 'github.com')
         ? 'github'
         : 'google';
+    if (result.operationType === 'link') clearPendingGitHubLink();
     return { ...buildUserData(result.user, providerId), token };
   } catch (error: any) {
+    if (error?.code === 'auth/account-exists-with-different-credential') {
+      // A redirected GitHub sign-in hit an existing account. Save the
+      // parameters so linking can finish after Google sign-in, then show a
+      // friendly hint instead of a dead-end error.
+      savePendingGitHubLink(error);
+      const methods: string[] = error?.customData?._methods || [];
+      throw new Error(
+        `This email is already registered with ${methods.includes('google.com') ? 'Google' : 'another sign-in method'}. Sign in that way — your GitHub account will be linked automatically.`
+      );
+    }
     console.error('Redirect sign-in error:', error);
     throw new Error(getAuthErrorMessage(error?.code, error?.message));
   }
