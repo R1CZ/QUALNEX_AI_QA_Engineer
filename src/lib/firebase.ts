@@ -98,6 +98,14 @@ export function hasPendingGitHubLink(): boolean {
   return readPendingGitHubLink() !== null;
 }
 
+/**
+ * True when a GitHub sign-in previously hit an account-exists conflict and
+ * the link still needs to be completed after signing in with Google.
+ */
+export function hasPendingGitHubLink(): boolean {
+  return readPendingGitHubLink() !== null;
+}
+
 function ensureConfigured() {
   if (!isFirebaseConfigured()) {
     throw new Error(
