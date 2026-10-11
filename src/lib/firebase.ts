@@ -24,6 +24,7 @@ import {
   signInWithRedirect, 
   linkWithPopup,
   linkWithRedirect,
+  linkWithCredential,
   getRedirectResult,
   GoogleAuthProvider, 
   GithubAuthProvider,
@@ -98,12 +99,13 @@ export function hasPendingGitHubLink(): boolean {
   return readPendingGitHubLink() !== null;
 }
 
-/**
- * True when a GitHub sign-in previously hit an account-exists conflict and
- * the link still needs to be completed after signing in with Google.
- */
-export function hasPendingGitHubLink(): boolean {
-  return readPendingGitHubLink() !== null;
+/** Forget a deferred GitHub link intent (completed, cancelled, or stale). */
+export function clearPendingGitHubLink() {
+  try {
+    sessionStorage.removeItem(PENDING_LINK_KEY);
+    sessionStorage.removeItem(PENDING_LINK_EMAIL_KEY);
+    sessionStorage.removeItem(PENDING_OAUTH_KEY);
+  } catch { /* ignore */ }
 }
 
 function ensureConfigured() {
@@ -224,33 +226,6 @@ async function resolveRegisteredMethods(
     console.warn('fetchSignInMethodsForEmail failed:', err?.code, err?.message);
     return [];
   }
-}
-
-/**
- * Complete a deferred GitHub link after signing in with the original
- * provider. Uses the OAuth response captured during the failed GitHub
- * attempt when available (no extra consent popup), otherwise runs one
- * normal GitHub consent popup. Non-fatal either way.
- */
-async function completeDeferredGitHubLink(user: FirebaseUser, error?: any): Promise<boolean> {
-  // Best case: Firebase surfaced the pending GitHub OAuth response on the
-  // account-exists error — attach it without asking the user again.
-  try {
-    const oauth = error?.customData?._tokenResponse?.oauth_response ?? readPendingGitHubOAuth();
-    const credential = githubCredentialFromOAuth(oauth);
-    if (credential) {
-      await user.linkWithCredential(credential);
-      cacheGitHubAccessToken(credential.accessToken);
-      clearPendingGitHubLink();
-      return true;
-    }
-  } catch (err: any) {
-    // Most likely cause: "Account linking by same provider with token is
-    // not allowed without the automatic linking API set" — fall through to
-    // the interactive path below.
-    console.warn('Silent GitHub link not permitted, using interactive link:', err?.code);
-  }
-  return linkGitHubIfPending();
 }
 
 /**
@@ -392,7 +367,9 @@ export async function signInWithGitHub() {
       if (methods.includes('google.com')) {
         try {
           const result = await signInWithPopup(auth, googleProvider);
-          const linked = await completeDeferredGitHubLink(result.user, error);
+          // Sign-in with the original provider succeeded — link GitHub to it
+          // now so both methods resolve to this one account.
+          const linked = await linkGitHubIfPending(result.user);
           const token = await result.user.getIdToken();
           return {
             ...buildUserData(result.user, linked ? 'github' : 'google'),
@@ -428,9 +405,52 @@ export async function signInWithGitHub() {
   }
 }
 
+/**
+ * Complete a deferred GitHub link after signing in with the original
+ * provider (e.g. Google). Uses the OAuth response captured during the
+ * failed GitHub attempt when available (no extra consent popup), otherwise
+ * runs one normal GitHub consent popup. Non-fatal either way — returns
+ * true only when GitHub ended up linked to this account.
+ */
+export async function linkGitHubIfPending(user?: FirebaseUser | null): Promise<boolean> {
+  const target = user ?? auth.currentUser;
+  if (!target) return false;
+  if (isGitHubConnected(target)) {
+    // Already linked — just clear any stale pending intent.
+    clearPendingGitHubLink();
+    return true;
+  }
+
+  const pendingEmail = readPendingGitHubEmail();
+  if (pendingEmail && target.email && pendingEmail.toLowerCase() !== target.email.toLowerCase()) {
+    // The pending attempt belongs to a different email — ignore it.
+    return false;
+  }
+
+  // Best case: Firebase surfaced the pending GitHub OAuth response on the
+  // account-exists error — attach it without asking the user again.
   try {
-    const result = await linkWithPopup(user, githubProvider);
+    const oauth = readPendingGitHubOAuth();
+    const credential = githubCredentialFromOAuth(oauth);
+    if (credential) {
+      await linkWithCredential(target, credential);
+      cacheGitHubAccessToken(credential.accessToken);
+      clearPendingGitHubLink();
+      return true;
+    }
+  } catch (err: any) {
+    // Most likely cause: "Account linking by same provider with token is
+    // not allowed without the automatic linking API set" — fall through to
+    // the interactive path below.
+    console.warn('Silent GitHub link not permitted, using interactive link:', err?.code);
+  }
+
+  if (!readPendingGitHubLink()) return false;
+
+  try {
+    const result = await linkWithPopup(target, githubProvider);
     cacheTokenFromCredential(result);
+    clearPendingGitHubLink();
     return true;
   } catch (err: any) {
     if (
@@ -440,7 +460,7 @@ export async function signInWithGitHub() {
     ) {
       // Defer: complete the link through a redirect on next page load.
       try {
-        await linkWithRedirect(user, githubProvider);
+        await linkWithRedirect(target, githubProvider);
       } catch { /* page is navigating anyway */ }
       return false;
     }
