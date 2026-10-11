@@ -49,27 +49,69 @@ class BaseIntegration(ABC):
 
 
 class JiraIntegration(BaseIntegration):
-    """Atlassian Jira Cloud/Server integration"""
-    
+    """Atlassian Jira Cloud/Server integration.
+
+    Supports two authorization styles:
+      1. OAuth 2.0 (3LO) access token - credentials["access_token"] with a
+         site URL like https://<company>.atlassian.net (or cloud_id).
+      2. Email + API token basic auth against api.atlassian.com/ex/jira/<cloud_id>.
+    """
+
     def __init__(self, credentials: Dict[str, str], config: Dict[str, Any]):
         super().__init__(credentials, config)
+        self.access_token = credentials.get("access_token", "")
+        self.site = (config.get("site") or "").rstrip("/")
         self.base_url = config.get("base_url", "https://api.atlassian.com")
         self.cloud_id = config.get("cloud_id", "")
         self.project_key = config.get("project_key", "")
-    
+
+    def _rest_base(self) -> str:
+        """Resolve the REST API v3 base for this connection style."""
+        if self.site and ("atlassian.net" in self.site or self.site.startswith("http")):
+            return f"{self.site}/rest/api/3"
+        if self.cloud_id:
+            return f"{self.base_url}/ex/jira/{self.cloud_id}/rest/api/3"
+        return "https://id.atlassian.com"
+
+    def _site_url(self) -> str:
+        if self.site:
+            return self.site
+        return self.base_url
+
+    async def _resolve_site_from_token(self, client: httpx.AsyncClient) -> Optional[str]:
+        """For OAuth tokens without an explicit site, look up accessible
+        sites via the Atlassian org endpoint."""
+        try:
+            resp = await client.get(
+                "https://api.atlassian.com/oauth/token/accessible-resources",
+                headers={"Authorization": f"Bearer {self.access_token}", "Accept": "application/json"},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                resources = resp.json()
+                if resources:
+                    self.cloud_id = resources[0].get("id", self.cloud_id)
+                    self.site = resources[0].get("url", self.site)
+                    return self.site
+        except Exception as e:
+            logger.error(f"Jira accessible-resources lookup failed: {e}")
+        return None
+
     async def test_connection(self) -> bool:
         async with httpx.AsyncClient() as client:
             try:
+                if self.access_token and not self._rest_base().endswith("/rest/api/3"):
+                    await self._resolve_site_from_token(client)
                 response = await client.get(
-                    f"{self.base_url}/ex/jira/{self.cloud_id}/rest/api/3/myself",
+                    f"{self._rest_base()}/myself",
                     headers=self._auth_headers(),
-                    timeout=10
+                    timeout=15
                 )
                 return response.status_code == 200
             except Exception as e:
                 logger.error(f"Jira connection test failed: {e}")
                 return False
-    
+
     async def create_issue(self, qa_case: Dict[str, Any]) -> ExternalIssue:
         """Create a Jira issue from a QA case"""
         # Idempotency check
@@ -77,7 +119,7 @@ class JiraIntegration(BaseIntegration):
         if existing:
             return ExternalIssue(
                 issue_id=existing,
-                issue_url=f"{self.base_url}/browse/{existing}",
+                issue_url=f"{self._site_url()}/browse/{existing}",
                 vendor="jira",
                 success=True
             )
@@ -103,7 +145,7 @@ class JiraIntegration(BaseIntegration):
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.post(
-                    f"{self.base_url}/ex/jira/{self.cloud_id}/rest/api/3/issue",
+                    f"{self._rest_base()}/issue",
                     headers=self._auth_headers(),
                     json=issue_data,
                     timeout=30
@@ -113,7 +155,7 @@ class JiraIntegration(BaseIntegration):
                     data = response.json()
                     return ExternalIssue(
                         issue_id=data["key"],
-                        issue_url=f"{self.base_url}/browse/{data['key']}",
+                        issue_url=f"{self._site_url()}/browse/{data['key']}",
                         vendor="jira",
                         success=True
                     )
@@ -138,7 +180,7 @@ class JiraIntegration(BaseIntegration):
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(
-                    f"{self.base_url}/ex/jira/{self.cloud_id}/rest/api/3/project",
+                    f"{self._rest_base()}/project",
                     headers=self._auth_headers(),
                     timeout=10
                 )
