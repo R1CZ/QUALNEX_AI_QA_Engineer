@@ -5,6 +5,7 @@ Verifies Firebase ID tokens and manages user sessions
 import firebase_admin
 from firebase_admin import auth, credentials
 from typing import Optional, Dict, Any
+from datetime import datetime
 from app.config import settings
 
 # Initialize Firebase Admin SDK
@@ -34,6 +35,15 @@ async def verify_firebase_token(id_token: str) -> Optional[Dict[str, Any]]:
         User info dict or None if invalid
     """
     try:
+        if not firebase_admin._apps:
+            # Firebase Admin was never initialized (no service account /
+            # default credentials). Fail with a clear message instead of an
+            # opaque error that surfaces as "Request failed" in the UI.
+            raise RuntimeError(
+                'Firebase Admin SDK is not initialized. Set FIREBASE_SERVICE_ACCOUNT_KEY '
+                '(path to a service account JSON) in backend/.env.'
+            )
+
         # Verify the token
         decoded_token = auth.verify_id_token(id_token)
         
@@ -91,7 +101,6 @@ async def get_or_create_user(firebase_user: Dict[str, Any]) -> Dict[str, Any]:
         # For now, create a default organization
         from app.models.organization import Organization
         from uuid import uuid4
-        from datetime import datetime
         
         org = Organization(
             id=uuid4(),
