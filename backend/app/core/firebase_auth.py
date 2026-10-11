@@ -115,10 +115,16 @@ async def get_or_create_user(firebase_user: Dict[str, Any]) -> Dict[str, Any]:
                 'createdAt': user.created_at.isoformat() if user.created_at else None,
             }
         
+<<<<<<< Updated upstream
         # Create new user. Reuse the first existing organization when one
         # is present so all users in this deployment share one tenant;
         # otherwise create a default organization.
         from app.models.organization import Organization
+=======
+        # Create new user
+        # For now, create a default organization
+        from app.models.models import Organization
+>>>>>>> Stashed changes
         from uuid import uuid4
         
         org_result = await db.execute(select(Organization).order_by(Organization.created_at).limit(1))

@@ -1,1 +1,25 @@
 dist/
+
+# Local credentials: never commit
+/backend/.env
+**/.env
+**/.env.*
+!**/.env.example
+/backend/serviceAccountKey.json
+**/serviceAccountKey*.json
+**/firebase-adminsdk*.json
+**/*service-account*.json
+*.pem
+*.key
+
+# Local credentials: never commit
+/backend/.env
+**/.env
+**/.env.*
+!**/.env.example
+/backend/serviceAccountKey.json
+**/serviceAccountKey*.json
+**/firebase-adminsdk*.json
+**/*service-account*.json
+*.pem
+*.key
