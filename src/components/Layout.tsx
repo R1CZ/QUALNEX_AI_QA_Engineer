@@ -1,17 +1,18 @@
-import React, { useState } from 'react';
+import React, { useEffect } from 'react';
 import { Link, useLocation, Outlet } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
+import AIGuide from './AIGuide';
 import {
   LayoutDashboard, FolderKanban, GitBranch, PlayCircle,
   Bug, FileCheck, BarChart3, Plug, Settings, LogOut,
-  Menu, X, ChevronRight, Zap, Map, Layers
+  Menu, X, ChevronRight, Zap, Map, Layers, Sparkles
 } from 'lucide-react';
 
 const navItems = [
   { path: '/app/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/app/projects', label: 'Projects', icon: FolderKanban },
   { path: '/app/repositories', label: 'Repositories', icon: GitBranch },
-  { path: '/app/qa-runs', label: 'QA Runs', icon: PlayCircle },
+  { path: '/app/qa-runs', label: 'QA Runs', icon: PlayCircle, badgeKey: 'qaRuns' as const },
   { path: '/app/app-map', label: 'App Map', icon: Map },
   { path: '/app/bugs', label: 'Bugs', icon: Bug },
   { path: '/app/qa-cases', label: 'QA Cases', icon: FileCheck },
@@ -22,9 +23,14 @@ const navItems = [
 ];
 
 export default function AppLayout() {
-  const { logout, user, organization } = useApp();
+  const { logout, user, organization, newRunCount, markRunsViewed, guideOpen, setGuideOpen } = useApp();
   const location = useLocation();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = React.useState(false);
+
+  // Opening the QA Runs page clears its notification badge.
+  useEffect(() => {
+    if (location.pathname.startsWith('/app/qa-runs')) markRunsViewed();
+  }, [location.pathname, markRunsViewed]);
 
   return (
     <div className="flex h-screen bg-navy-950 overflow-hidden">
@@ -64,6 +70,7 @@ export default function AppLayout() {
           {navItems.map(item => {
             const isActive = location.pathname === item.path;
             const Icon = item.icon;
+            const badge = item.badgeKey === 'qaRuns' ? newRunCount : 0;
             return (
               <Link
                 key={item.path}
@@ -78,9 +85,19 @@ export default function AppLayout() {
                   }
                 `}
               >
-                <Icon className="w-4.5 h-4.5 flex-shrink-0" />
+                <span className="relative flex-shrink-0">
+                  <Icon className="w-4.5 h-4.5" />
+                </span>
                 {item.label}
-                {isActive && <ChevronRight className="w-3.5 h-3.5 ml-auto" />}
+                {badge > 0 && (
+                  <span
+                    aria-label={`${badge} new QA runs`}
+                    className="ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center"
+                  >
+                    {badge > 99 ? '99+' : badge}
+                  </span>
+                )}
+                {isActive && badge === 0 && <ChevronRight className="w-3.5 h-3.5 ml-auto" />}
               </Link>
             );
           })}
@@ -119,6 +136,15 @@ export default function AppLayout() {
           </button>
           <div className="flex-1" />
           <div className="flex items-center gap-3">
+            {/* AI Guide */}
+            <button
+              onClick={() => setGuideOpen(true)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-violet-500/10 border border-violet-500/25 text-violet-300 hover:text-white hover:border-violet-400/50 transition-colors"
+              title="Open the AI Guide walkthrough"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline text-xs font-medium">AI Guide</span>
+            </button>
             {/* System Status */}
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-400/10 border border-emerald-400/20">
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -132,6 +158,9 @@ export default function AppLayout() {
           <Outlet />
         </div>
       </main>
+
+      {/* AI Guide modal */}
+      {guideOpen && <AIGuide onClose={() => setGuideOpen(false)} />}
     </div>
   );
 }

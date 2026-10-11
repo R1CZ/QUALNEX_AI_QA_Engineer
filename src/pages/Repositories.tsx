@@ -34,9 +34,10 @@ export default function Repositories() {
 
   // Scenario B: signed in with GitHub -> already authorized, fetch repos
   // automatically. Scenario A: after connecting via "Connect GitHub" below,
-  // the same effect runs and lists the repositories.
+  // the same effect runs and lists the repositories. Re-runs whenever the
+  // connection state flips (e.g. token restored after a page reload).
   useEffect(() => {
-    if (connected && repositories.length === 0 && !loading) {
+    if (connected && repositories.length === 0) {
       void loadRepos();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
