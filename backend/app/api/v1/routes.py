@@ -5,7 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict, Any
-from uuid import UUID
+from uuid import UUID, uuid4
+
+from app.workers.executor import job_queue
 import secrets
 
 from app.core.security import (
@@ -196,54 +198,75 @@ async def list_runs(
     # In production: query runs with tenant isolation
     return {"runs": []}
 
-@router.post("/runs")
+@router.post("/runs", status_code=status.HTTP_202_ACCEPTED)
 async def create_run(
     body: QARunCreate,
     background_tasks: BackgroundTasks,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    """Start a new QA run"""
+    """Queue a QA run in Redis and return its persistent ID."""
     if not credentials:
         raise HTTPException(status_code=401)
-    
-    # In production:
-    # 1. Validate project exists and user has access
-    # 2. Create run record in database
-    # 3. Enqueue job in Redis
-    # 4. Return run ID
-    
-    # Rate limiting check
-    # await check_rate_limit("qa_runs", credentials.credentials)
-    
-    return {
-        "id": "run_new",
-        "status": "queued",
+
+    run_id = str(uuid4())
+    payload = {
+        "run_id": run_id,
         "project_id": body.project_id,
+        "organization_id": "",
+        "qa_config": body.qa_config,
     }
+    try:
+        await job_queue.enqueue("qa_run", payload, job_id=run_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The job queue is currently unavailable.",
+        ) from exc
+
+    return {"id": run_id, "status": "queued", "project_id": body.project_id}
 
 @router.get("/runs/{run_id}")
 async def get_run(
     run_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    """Get QA run details"""
+    """Get the current persisted QA job status."""
     if not credentials:
         raise HTTPException(status_code=401)
-    
-    # In production: query run with tenant isolation
-    return {"id": run_id, "status": "queued"}
+    try:
+        run = await job_queue.get_job_status(run_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The job queue is currently unavailable.",
+        ) from exc
+    if run is None:
+        raise HTTPException(status_code=404, detail="QA run not found")
+    return run
 
 @router.post("/runs/{run_id}/cancel")
 async def cancel_run(
     run_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    """Cancel a running QA execution"""
+    """Cancel a queued run. Already running jobs are not forcibly interrupted."""
     if not credentials:
         raise HTTPException(status_code=401)
-    
-    # In production: update run status, cancel worker job
-    return {"status": "cancelled"}
+    try:
+        run = await job_queue.get_job_status(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="QA run not found")
+        cancelled = await job_queue.cancel_job(run_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The job queue is currently unavailable.",
+        ) from exc
+    if not cancelled:
+        raise HTTPException(status_code=409, detail="This run is already running or has finished")
+    return {"id": run_id, "status": "cancelled"}
 
 # ============ Bug/Finding Endpoints ============
 

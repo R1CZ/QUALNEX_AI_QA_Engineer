@@ -12,6 +12,7 @@ from app.config import settings
 from app.db.session import engine, Base
 from app.core.security import verify_token
 from app.api.v1 import router as api_v1_router
+from app.workers.executor import job_queue
 
 # Configure logging
 logging.basicConfig(
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down QUALNEX API...")
+    await job_queue.disconnect()
     await engine.dispose()
 
 # Create FastAPI application

@@ -11,10 +11,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from app.config import settings
+from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
 
 class JobStatus(str, Enum):
+    QUEUED = "queued"
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -40,39 +42,80 @@ class Job:
     completed_at: Optional[datetime] = None
 
 class JobQueue:
-    """
-    Redis-based job queue with support for:
-    - Priority queues
-    - Retries with exponential backoff
-    - Job cancellation
-    - Idempotency keys
-    - Dead letter queue
-    - Job correlation IDs for tracing
-    """
-    
+    """Redis-backed queue used by both the API and the worker process."""
+
+    JOB_TTL_SECONDS = 30 * 24 * 60 * 60
+
     def __init__(self):
-        self.redis = None  # In production: aioredis connection
+        self.redis: Optional[Redis] = None
         self.queue_name = settings.redis_queue_name
         self.handlers: Dict[str, Callable] = {}
         self.active_jobs: Dict[str, Job] = {}
-    
+
     async def connect(self):
-        """Connect to Redis"""
-        # In production:
-        # import aioredis
-        # self.redis = await aioredis.from_url(settings.redis_url)
-        logger.info("Job queue connected to Redis")
-    
+        if self.redis is None:
+            self.redis = Redis.from_url(settings.redis_url, decode_responses=True)
+        await self.redis.ping()
+
     async def disconnect(self):
-        """Disconnect from Redis"""
-        if self.redis:
-            # await self.redis.close()
-            pass
-    
+        if self.redis is not None:
+            await self.redis.aclose()
+            self.redis = None
+
     def register_handler(self, job_type: str, handler: Callable):
-        """Register a job handler function"""
         self.handlers[job_type] = handler
-    
+
+    def _job_key(self, job_id: str) -> str:
+        return f"{self.queue_name}:job:{job_id}"
+
+    @staticmethod
+    def _serialize(job: Job) -> Dict[str, Any]:
+        return {
+            "id": job.id,
+            "type": job.type,
+            "payload": job.payload,
+            "status": job.status.value,
+            "result": job.result,
+            "error": job.error,
+            "retries": job.retries,
+            "max_retries": job.max_retries,
+            "correlation_id": job.correlation_id,
+            "organization_id": job.organization_id,
+            "created_at": job.created_at.isoformat(),
+            "started_at": job.started_at.isoformat() if job.started_at else None,
+            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        }
+
+    async def _save_job(self, job: Job):
+        await self.connect()
+        await self.redis.set(
+            self._job_key(job.id),
+            json.dumps(self._serialize(job)),
+            ex=self.JOB_TTL_SECONDS,
+        )
+
+    async def _load_job(self, job_id: str) -> Optional[Job]:
+        await self.connect()
+        raw = await self.redis.get(self._job_key(job_id))
+        if not raw:
+            return None
+        data = json.loads(raw)
+        return Job(
+            id=data["id"],
+            type=data["type"],
+            payload=data.get("payload") or {},
+            status=JobStatus(data.get("status", JobStatus.QUEUED.value)),
+            result=data.get("result"),
+            error=data.get("error"),
+            retries=int(data.get("retries", 0)),
+            max_retries=int(data.get("max_retries", 3)),
+            correlation_id=data.get("correlation_id", ""),
+            organization_id=data.get("organization_id", ""),
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.utcnow(),
+            started_at=datetime.fromisoformat(data["started_at"]) if data.get("started_at") else None,
+            completed_at=datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None,
+        )
+
     async def enqueue(
         self,
         job_type: str,
@@ -81,122 +124,126 @@ class JobQueue:
         idempotency_key: str = None,
         organization_id: str = "",
         correlation_id: str = None,
+        job_id: str = None,
     ) -> str:
-        """Add a job to the queue"""
-        job_id = str(uuid.uuid4())
-        
-        # Idempotency check
+        await self.connect()
         if idempotency_key:
             existing = await self._get_by_idempotency(idempotency_key)
             if existing:
-                logger.info(f"Idempotent job already exists: {existing}")
                 return existing
-        
+
+        new_job_id = job_id or str(uuid.uuid4())
         job = Job(
-            id=job_id,
+            id=new_job_id,
             type=job_type,
             payload=payload,
+            status=JobStatus.QUEUED,
             organization_id=organization_id,
             correlation_id=correlation_id or str(uuid.uuid4()),
         )
-        
-        # In production: push to Redis sorted set with priority
-        # await self.redis.zadd(self.queue_name, {json.dumps(job_data): priority})
-        
-        # Store idempotency key
+        await self._save_job(job)
         if idempotency_key:
-            await self._set_idempotency(idempotency_key, job_id)
-        
-        logger.info(f"Job enqueued: {job_id} (type: {job_type})")
-        return job_id
-    
-    async def process_next(self) -> Optional[Job]:
-        """Get and process the next job from the queue"""
-        # In production:
-        # job_data = await self.redis.zpopmin(self.queue_name)
-        # if not job_data: return None
-        
-        # Simulated for reference
-        return None
-    
+            await self._set_idempotency(idempotency_key, new_job_id)
+        # LPUSH + BRPOP provides FIFO ordering for normal jobs.
+        await self.redis.lpush(self.queue_name, new_job_id)
+        logger.info("Job enqueued: %s (type=%s)", new_job_id, job_type)
+        return new_job_id
+
+    async def process_next(self, timeout: int = 5) -> Optional[Job]:
+        await self.connect()
+        item = await self.redis.brpop(self.queue_name, timeout=timeout)
+        if not item:
+            return None
+        return await self._load_job(item[1])
+
     async def process_job(self, job: Job):
-        """Process a single job with error handling and retries"""
+        await self.connect()
         handler = self.handlers.get(job.type)
-        if not handler:
-            logger.error(f"No handler for job type: {job.type}")
+        if handler is None:
+            job.status = JobStatus.FAILED
+            job.error = f"No handler registered for job type: {job.type}"
+            job.completed_at = datetime.utcnow()
+            await self._save_job(job)
+            await self._dead_letter(job)
+            logger.error(job.error)
             return
-        
+
+        if job.status == JobStatus.CANCELLED:
+            return
+
         job.status = JobStatus.RUNNING
         job.started_at = datetime.utcnow()
         self.active_jobs[job.id] = job
-        
+        await self._save_job(job)
+
         try:
             result = await handler(job.payload)
-            job.status = JobStatus.COMPLETED
-            job.result = result
+            job.result = result if isinstance(result, dict) else {"value": result}
+            if isinstance(result, dict) and result.get("status") in {"failed", "error", "not_implemented"}:
+                job.status = JobStatus.FAILED
+                job.error = str(result.get("error") or "Job handler reported failure")
+            else:
+                job.status = JobStatus.COMPLETED
             job.completed_at = datetime.utcnow()
-            logger.info(f"Job completed: {job.id}")
-            
-        except Exception as e:
-            logger.error(f"Job failed: {job.id} - {e}")
+            logger.info("Job %s finished with status %s", job.id, job.status.value)
+        except Exception as exc:
             job.retries += 1
-            
+            job.error = str(exc)
             if job.retries <= job.max_retries:
                 job.status = JobStatus.RETRYING
-                # Re-enqueue with exponential backoff
-                delay = 2 ** job.retries
+                await self._save_job(job)
+                delay = min(2 ** job.retries, 30)
+                logger.exception("Job %s failed; retry %s/%s in %ss", job.id, job.retries, job.max_retries, delay)
                 await asyncio.sleep(delay)
-                await self.enqueue(
-                    job.type,
-                    job.payload,
-                    organization_id=job.organization_id,
-                    correlation_id=job.correlation_id,
-                )
-            else:
-                job.status = JobStatus.FAILED
-                job.error = str(e)
-                job.completed_at = datetime.utcnow()
-                # Move to dead letter queue
-                await self._dead_letter(job)
-        
+                await self.redis.lpush(self.queue_name, job.id)
+                return
+            job.status = JobStatus.FAILED
+            job.completed_at = datetime.utcnow()
+            logger.exception("Job %s failed permanently", job.id)
+            await self._dead_letter(job)
         finally:
             self.active_jobs.pop(job.id, None)
-    
+            await self._save_job(job)
+
     async def cancel_job(self, job_id: str) -> bool:
-        """Cancel a pending or running job"""
-        if job_id in self.active_jobs:
-            self.active_jobs[job_id].status = JobStatus.CANCELLED
-            return True
-        # In production: remove from Redis queue
-        return False
-    
-    async def get_job_status(self, job_id: str) -> Optional[Dict]:
-        """Get the status of a job"""
-        if job_id in self.active_jobs:
-            job = self.active_jobs[job_id]
-            return {
-                "id": job.id,
-                "status": job.status.value,
-                "progress": 0,
-                "error": job.error,
-            }
-        # In production: check Redis
-        return None
-    
+        job = await self._load_job(job_id)
+        if job is None or job.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
+            return False
+        # Running Python/browser work cannot safely be interrupted by this queue alone.
+        if job.status == JobStatus.RUNNING:
+            return False
+        job.status = JobStatus.CANCELLED
+        job.completed_at = datetime.utcnow()
+        await self._save_job(job)
+        return True
+
+    async def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
+        job = await self._load_job(job_id)
+        if job is None:
+            return None
+        return {
+            "id": job.id,
+            "status": job.status.value,
+            "progress": 100 if job.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED} else 0,
+            "error": job.error,
+            "result": job.result,
+            "created_at": job.created_at.isoformat(),
+            "started_at": job.started_at.isoformat() if job.started_at else None,
+            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        }
+
     async def _get_by_idempotency(self, key: str) -> Optional[str]:
-        """Check if an idempotency key exists"""
-        # In production: await self.redis.get(f"idempotency:{key}")
-        return None
-    
+        await self.connect()
+        return await self.redis.get(f"{self.queue_name}:idempotency:{key}")
+
     async def _set_idempotency(self, key: str, job_id: str):
-        """Store an idempotency key"""
-        # In production: await self.redis.set(f"idempotency:{key}", job_id, ex=86400)
-        pass
-    
+        await self.connect()
+        await self.redis.set(f"{self.queue_name}:idempotency:{key}", job_id, ex=86400)
+
     async def _dead_letter(self, job: Job):
-        """Move a failed job to the dead letter queue"""
-        # In production: await self.redis.lpush(f"{self.queue_name}:dead", json.dumps(job_data))
-        logger.warning(f"Job moved to dead letter: {job.id}")
+        await self.connect()
+        await self.redis.lpush(f"{self.queue_name}:dead", json.dumps(self._serialize(job)))
+        logger.warning("Job moved to dead letter queue: %s", job.id)
 
 
 # ============ QA Run Worker ============
@@ -269,6 +316,12 @@ class QARunWorker:
                 logger.error(f"Step {step_name} error: {e}")
                 return {"status": "failed", "step": step_name, "error": str(e)}
         
+        if not context.get("test_plan") or not context.get("test_results"):
+            return {
+                "status": "failed",
+                "step": "testing",
+                "error": "No real test plan/results were produced. The QA execution pipeline still contains placeholder implementations; this run must not be reported as passed.",
+            }
         return {"status": "completed", "run_id": run_id}
     
     async def _prepare_repository(self, context: Dict) -> Dict:
@@ -440,3 +493,33 @@ class PlaywrightWorker:
         #     text = await element.text_content()
         #     assert value in text
         pass
+
+# Shared queue instance in this process. The API has its own process-local instance.
+job_queue = JobQueue()
+
+
+async def worker_main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+    qa_worker = QARunWorker(job_queue)
+    job_queue.register_handler("qa_run", qa_worker.execute_run)
+    await job_queue.connect()
+    logger.info("QUALNEX worker started; waiting for Redis jobs on %s", job_queue.queue_name)
+    try:
+        while True:
+            job = await job_queue.process_next(timeout=5)
+            if job is None or job.status == JobStatus.CANCELLED:
+                continue
+            await job_queue.process_job(job)
+    finally:
+        await job_queue.disconnect()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(worker_main())
+    except KeyboardInterrupt:
+        logger.info("QUALNEX worker stopped")
+

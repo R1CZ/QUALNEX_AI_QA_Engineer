@@ -10,9 +10,9 @@ from app.config import settings
 # Initialize Firebase Admin SDK
 # In production, use service account JSON file
 if not firebase_admin._apps:
-    if settings.FIREBASE_SERVICE_ACCOUNT_KEY:
+    if settings.firebase_service_account_key:
         # Production: use service account
-        cred = credentials.Certificate(settings.FIREBASE_SERVICE_ACCOUNT_KEY)
+        cred = credentials.Certificate(settings.firebase_service_account_key)
         firebase_admin.initialize_app(cred)
     else:
         # Development: use default credentials
@@ -64,7 +64,7 @@ async def get_or_create_user(firebase_user: Dict[str, Any]) -> Dict[str, Any]:
         User dict with backend user data
     """
     from app.db.session import AsyncSessionLocal
-    from app.models.user import User
+    from app.models.models import User
     from sqlalchemy import select
     
     async with AsyncSessionLocal() as db:

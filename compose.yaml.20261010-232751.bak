@@ -1,0 +1,176 @@
+
+name: qualnex_ai_qa_engineer
+
+services:
+  # ============ Frontend (React + Vite + Nginx) ============
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: "http://localhost:8000/api"
+        VITE_WS_URL: "ws://localhost:8000"
+        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY}
+        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN}
+        VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID}
+        VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID}
+    ports:
+      - "3000:80"
+    environment:
+      VITE_API_URL: "http://localhost:8000/api"
+      VITE_WS_URL: "ws://localhost:8000"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - qualnex-net
+    restart: unless-stopped
+
+  # ============ API Server (FastAPI) ============
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://qualnex:qualnex@postgres:5432/qualnex"
+      REDIS_URL: "redis://redis:6379/0"
+      ENVIRONMENT: "production"
+      DEBUG: "false"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -f
+        - "http://localhost:8000/health"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - qualnex-net
+      - qualnex-sandbox
+    restart: unless-stopped
+
+  # ============ Background Worker ============
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command:
+      - python
+      - -m
+      - app.workers.executor
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://qualnex:qualnex@postgres:5432/qualnex"
+      REDIS_URL: "redis://redis:6379/0"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - qualnex-net
+      - qualnex-sandbox
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, redis; redis.Redis.from_url(os.environ['REDIS_URL'], socket_connect_timeout=2, socket_timeout=2).ping()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # ============ PostgreSQL Database ============
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: qualnex
+      POSTGRES_PASSWORD: qualnex
+      POSTGRES_DB: qualnex
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U qualnex
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qualnex-net
+    restart: unless-stopped
+
+  # ============ Redis Queue ============
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command:
+      - redis-server
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+    networks:
+      - qualnex-net
+    restart: unless-stopped
+
+  # ============ Object Storage (MinIO) ============
+  minio:
+    image: chainguard/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: qualnex
+      MINIO_ROOT_PASSWORD: qualnex123
+    volumes:
+      - minio_data:/data
+    command:
+      - server
+      - /data
+      - --console-address
+      - ":9001"
+    networks:
+      - qualnex-net
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+
+networks:
+  qualnex-net:
+    driver: bridge
+  qualnex-sandbox:
+    driver: bridge
+    internal: false
