@@ -3,13 +3,42 @@ import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Zap, ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { signInWithGoogle, signInWithGitHub } from '../lib/firebase';
+import {
+  signInWithGoogle,
+  signInWithGitHub,
+  handlePendingRedirect,
+  linkGitHubIfPending,
+} from '../lib/firebase';
 
 export default function Login() {
   const { login, error, clearError, isAuthenticated, isLoading } = useApp();
   const navigate = useNavigate();
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Complete a redirect-based sign-in if the page just returned from OAuth
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const userData = await handlePendingRedirect();
+        if (cancelled) return;
+        if (userData) {
+          setIsProcessing(true);
+          await login(userData);
+          // Auto-link GitHub if a previous attempt hit an account conflict
+          await linkGitHubIfPending();
+          if (!cancelled) navigate('/app/dashboard');
+        }
+      } catch (err: any) {
+        if (!cancelled) setLoginError(err.message || 'Sign-in failed');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Redirect if already authenticated
   useEffect(() => {
@@ -23,9 +52,14 @@ export default function Login() {
       setLoginError(null);
       setIsProcessing(true);
       clearError();
-      
+
       const userData = await signInWithGoogle();
+      // null means a redirect is in progress (popup was blocked)
+      if (!userData) return;
+
       await login(userData);
+      // If GitHub previously failed with "account exists", link it now.
+      await linkGitHubIfPending();
       navigate('/app/dashboard');
     } catch (err: any) {
       setLoginError(err.message || 'Google sign-in failed');
@@ -38,8 +72,11 @@ export default function Login() {
       setLoginError(null);
       setIsProcessing(true);
       clearError();
-      
+
       const userData = await signInWithGitHub();
+      // null means a redirect is in progress (popup was blocked)
+      if (!userData) return;
+
       await login(userData);
       navigate('/app/dashboard');
     } catch (err: any) {
