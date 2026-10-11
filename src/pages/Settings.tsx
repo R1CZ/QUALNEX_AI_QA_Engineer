@@ -78,15 +78,6 @@ export default function SettingsPage() {
                     className="w-full px-3 py-2.5 bg-navy-800 border border-navy-700 rounded-lg text-sm text-white focus:outline-none focus:border-cyan-500/50"
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1.5">Role</label>
-                  <input
-                    type="text"
-                    value={user?.role || ''}
-                    disabled
-                    className="w-full px-3 py-2.5 bg-navy-800/50 border border-navy-700 rounded-lg text-sm text-slate-500 capitalize"
-                  />
-                </div>
               </div>
               <div className="mt-6 flex items-center gap-3">
                 <button

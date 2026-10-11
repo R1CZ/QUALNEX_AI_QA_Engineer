@@ -78,6 +78,9 @@ export default function Login() {
       if (!userData) return;
 
       await login(userData);
+      // If the GitHub attempt hit an "account exists" conflict (or was
+      // completed via Google), link GitHub to this account automatically.
+      await linkGitHubIfPending();
       navigate('/app/dashboard');
     } catch (err: any) {
       setLoginError(err.message || 'GitHub sign-in failed');
