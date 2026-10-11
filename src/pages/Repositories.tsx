@@ -1,44 +1,72 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-  GitBranch, Search, Plus, ExternalLink,
-  Check, AlertCircle, Loader2, RefreshCw
+  GitBranch, Search, Plus, Check, AlertCircle, Loader2, RefreshCw, Github
 } from 'lucide-react';
-
-interface RepoItem {
-  id: string;
-  name: string;
-  fullName: string;
-  owner: string;
-  language: string;
-  framework: string;
-  defaultBranch: string;
-  lastUpdated: string;
-  connected: boolean;
-}
-
-const mockRepos: RepoItem[] = [];
+import { useApp } from '../context/AppContext';
+import { connectGitHubAccount, isFirebaseConfigured } from '../lib/firebase';
+import { fetchGitHubRepositories, getCurrentGitHubAccount } from '../lib/github';
+import type { Repository } from '../types';
 
 export default function Repositories() {
-  const [connected, setConnected] = useState(false);
-  const [repos, setRepos] = useState<RepoItem[]>(mockRepos);
+  const { repositories, setRepositories, setUserGithubAccount, error, clearError } = useApp();
   const [search, setSearch] = useState('');
   const [connecting, setConnecting] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
 
-  const filtered = repos.filter(r =>
+  const account = getCurrentGitHubAccount();
+  const connected = !!account;
+
+  const loadRepos = useCallback(async () => {
+    if (!connected) return;
+    setLoading(true);
+    setLocalError(null);
+    try {
+      const repos = await fetchGitHubRepositories();
+      setRepositories(repos);
+    } catch (err: any) {
+      setLocalError(err?.message || 'Failed to load your GitHub repositories.');
+    } finally {
+      setLoading(false);
+    }
+  }, [connected, setRepositories]);
+
+  // Scenario B: signed in with GitHub -> already authorized, fetch repos
+  // automatically. Scenario A: after connecting via "Connect GitHub" below,
+  // the same effect runs and lists the repositories.
+  useEffect(() => {
+    if (connected && repositories.length === 0 && !loading) {
+      void loadRepos();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected]);
+
+  const handleConnect = async () => {
+    if (!isFirebaseConfigured()) {
+      setLocalError('Firebase is not configured yet — set your VITE_FIREBASE_* values in .env before connecting GitHub.');
+      return;
+    }
+    setConnecting(true);
+    setLocalError(null);
+    clearError();
+    try {
+      // Authorize GitHub and link it to the current (e.g. Google) account.
+      await connectGitHubAccount();
+      const gh = getCurrentGitHubAccount();
+      setUserGithubAccount(gh ? { ...gh, connectedAt: new Date().toISOString() } : null);
+      await loadRepos();
+    } catch (err: any) {
+      setLocalError(err?.message || 'Failed to connect GitHub.');
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const filtered = repositories.filter(r =>
     r.fullName.toLowerCase().includes(search.toLowerCase()) ||
     r.language.toLowerCase().includes(search.toLowerCase())
   );
-
-  const handleConnect = () => {
-    setConnecting(true);
-    // In production, this would redirect to GitHub App installation
-    setTimeout(() => {
-      setConnecting(false);
-      setConnected(true);
-      // No mock repos - showing "Coming Soon" / empty state
-    }, 2000);
-  };
 
   return (
     <div className="p-4 lg:p-8 max-w-7xl mx-auto">
@@ -59,10 +87,23 @@ export default function Repositories() {
             ) : (
               <Plus className="w-4 h-4" />
             )}
-            {connecting ? 'Connecting...' : 'Connect GitHub'}
+            {connecting ? 'Waiting for GitHub authorization...' : 'Connect GitHub'}
           </button>
         )}
       </div>
+
+      {(localError || error) && (
+        <div className="mb-6 p-4 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-rose-400 flex-1">{localError || error}</p>
+          <button
+            onClick={() => { setLocalError(null); clearError(); }}
+            className="text-xs text-rose-400 hover:text-rose-300 underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Connection Status */}
       <div className="glass-card rounded-xl p-6 mb-6">
@@ -81,14 +122,26 @@ export default function Repositories() {
               {connected ? 'GitHub Connected' : 'Connect GitHub'}
             </h3>
             <p className="text-sm text-slate-400">
-              {connected
-                ? 'Your GitHub account is connected. Select repositories to create QA projects.'
-                : 'Connect your GitHub account using the QUALNEX GitHub App with least-privilege permissions.'}
+              {connected ? (
+                <span className="inline-flex items-center gap-2">
+                  <Github className="w-4 h-4 text-slate-300" />
+                  Authorized as{' '}
+                  <span className="text-cyan-400 font-medium">@{account!.login}</span>
+                  {account!.name && account!.name !== account!.login ? ` (${account!.name})` : ''}
+                  {' '}— read access granted during OAuth authorization.
+                </span>
+              ) : (
+                'Connect your GitHub account so QUALNEX can list the repositories you are authorized to test.'
+              )}
             </p>
           </div>
           {connected && (
-            <button className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-navy-700 hover:border-navy-600 transition-colors">
-              <RefreshCw className="w-3 h-3" />
+            <button
+              onClick={loadRepos}
+              disabled={loading}
+              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg border border-navy-700 hover:border-navy-600 transition-colors disabled:opacity-60"
+            >
+              <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
               Refresh
             </button>
           )}
@@ -109,7 +162,12 @@ export default function Repositories() {
             />
           </div>
 
-          {filtered.length === 0 ? (
+          {loading && repositories.length === 0 ? (
+            <div className="glass-card rounded-xl p-12 text-center">
+              <Loader2 className="w-7 h-7 text-cyan-400 animate-spin mx-auto mb-4" />
+              <p className="text-sm text-slate-400">Loading your GitHub repositories...</p>
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="glass-card rounded-xl p-12 text-center">
               <div className="w-16 h-16 rounded-xl bg-navy-800 flex items-center justify-center mx-auto mb-4">
                 <GitBranch className="w-7 h-7 text-slate-500" />
@@ -118,7 +176,7 @@ export default function Repositories() {
               <p className="text-sm text-slate-400 max-w-md mx-auto">
                 {search
                   ? 'No repositories match your search.'
-                  : 'No repositories are currently authorized. Install the QUALNEX GitHub App to discover your repositories.'}
+                  : 'No repositories are available for this GitHub account.'}
               </p>
             </div>
           ) : (
@@ -128,7 +186,7 @@ export default function Repositories() {
                   key={repo.id}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.05 }}
+                  transition={{ delay: Math.min(index * 0.03, 0.3) }}
                   className="glass-card rounded-xl p-4 flex items-center gap-4 hover:border-cyan-500/30 transition-colors"
                 >
                   <div className="w-10 h-10 rounded-lg bg-navy-800 flex items-center justify-center">
@@ -137,9 +195,7 @@ export default function Repositories() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-medium text-white truncate">{repo.fullName}</p>
-                      {repo.connected && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-400/10 text-emerald-400">Connected</span>
-                      )}
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-400/10 text-emerald-400">Connected</span>
                     </div>
                     <div className="flex items-center gap-3 mt-1">
                       <span className="text-xs text-slate-500">{repo.language}</span>
@@ -147,9 +203,6 @@ export default function Repositories() {
                       <span className="text-xs text-slate-500">· {repo.defaultBranch}</span>
                     </div>
                   </div>
-                  <button className="text-xs text-cyan-400 hover:text-cyan-300 font-medium px-3 py-1.5 rounded-lg hover:bg-cyan-500/5 transition-colors">
-                    Create Project
-                  </button>
                 </motion.div>
               ))}
             </div>
@@ -166,8 +219,10 @@ export default function Repositories() {
             </div>
             <h3 className="text-lg font-medium text-white mb-2">GitHub Integration</h3>
             <p className="text-sm text-slate-400 mb-6">
-              QUALNEX uses a GitHub App with least-privilege permissions to securely access your repositories.
-              Your source code is never modified — only read for analysis and testing.
+              Click <span className="text-cyan-400">Connect GitHub</span> to authorize your GitHub account.
+              QUALNEX requests read-only repository access — your source code is never modified,
+              only analyzed for testing. If you signed in with GitHub directly, your account is
+              already connected here.
             </p>
             <div className="text-xs text-slate-500 space-y-1">
               <p>✓ Read-only access to repository contents</p>
