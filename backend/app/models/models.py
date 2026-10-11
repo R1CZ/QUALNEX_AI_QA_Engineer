@@ -247,7 +247,7 @@ class RunEvent(Base):
     event_type = Column(String(50), nullable=False)
     step = Column(String(100))
     message = Column(Text)
-    metadata = Column(JSONB, default={})
+    event_metadata = Column("metadata", JSONB, default=dict)
     
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
@@ -384,7 +384,7 @@ class AuditLog(Base):
     ip_address = Column(String(45))
     user_agent = Column(String(500))
     
-    metadata = Column(JSONB, default={})
+    audit_metadata = Column("metadata", JSONB, default=dict)
     correlation_id = Column(UUID(as_uuid=True))
     
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
