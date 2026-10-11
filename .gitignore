@@ -23,3 +23,15 @@ dist/
 **/*service-account*.json
 *.pem
 *.key
+
+# Local credentials - never commit
+/backend/.env
+/backend/serviceAccountKey.json
+
+# Python generated files
+__pycache__/
+*.py[cod]
+
+# Python generated files
+__pycache__/
+*.py[cod]
