@@ -18,15 +18,16 @@
  */
 
 import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  signInWithPopup, 
-  signInWithRedirect, 
+import {
+  getAuth,
+  signInWithPopup,
+  signInWithRedirect,
   linkWithPopup,
   linkWithRedirect,
   linkWithCredential,
+  reauthenticateWithPopup,
   getRedirectResult,
-  GoogleAuthProvider, 
+  GoogleAuthProvider,
   GithubAuthProvider,
   fetchSignInMethodsForEmail,
   signOut as firebaseSignOut,
@@ -36,12 +37,12 @@ import {
 
 // Firebase configuration - REPLACE WITH YOUR VALUES
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "YOUR_API_KEY",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "YOUR_PROJECT.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "YOUR_PROJECT_ID",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "YOUR_PROJECT.appspot.com",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "YOUR_SENDER_ID",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "YOUR_APP_ID",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBFwL5-_BL6aCgKLL4fD6joaVGZ0lxmnYs",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "qualnex-dev.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "qualnex-dev.firebaseapp.com",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "qualnex-dev.firebaseapp.com",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "159947900945",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:159947900945:web:398c9076a9fcbf387b09b0",
 };
 
 /**
@@ -251,21 +252,37 @@ export function getGitHubLogin(user: FirebaseUser): string | null {
  */
 export async function getGitHubAccessToken(): Promise<string | null> {
   const user = auth.currentUser;
-  if (!user || !isGitHubConnected(user)) return null;
-  // Prefer the token captured during this session's GitHub sign-in/link.
+
+  if (!user || !isGitHubConnected(user)) {
+    return null;
+  }
+
+  // Reuse the GitHub access token captured during this session.
   const cached = getStoredGitHubAccessToken();
-  if (cached) return cached;
+
+  if (cached) {
+    return cached;
+  }
+
   try {
-    // No cached token (e.g. page was reloaded): refresh it via the GitHub
-    // consent flow. linkWithPopup for an already-linked provider re-uses the
-    // existing GitHub session (usually no visible prompt) and returns a
-    // fresh OAuth access token that we then cache for repository listing.
-    const result = await linkWithPopup(user, githubProvider);
-    const accessToken = (result as any).credential?.accessToken || null;
-    cacheGitHubAccessToken(accessToken);
+    // The provider is already linked, so reauthenticate instead of
+    // trying to link the same provider again.
+    const result = await reauthenticateWithPopup(user, githubProvider);
+    const credential = GithubAuthProvider.credentialFromResult(result);
+    const accessToken = credential?.accessToken ?? null;
+
+    if (accessToken) {
+      cacheGitHubAccessToken(accessToken);
+    }
+
     return accessToken;
-  } catch (err: any) {
-    console.warn('Could not retrieve GitHub access token:', err?.code, err?.message);
+  } catch (error: any) {
+    console.warn(
+      'Could not retrieve GitHub access token:',
+      error?.code,
+      error?.message
+    );
+
     return null;
   }
 }
@@ -288,12 +305,14 @@ function buildUserData(user: FirebaseUser, providerId: string) {
   };
 }
 
-/** Extract the GitHub OAuth access token from a sign-in/link UserCredential. */
-function cacheTokenFromCredential(cred: any) {
+
+function cacheTokenFromCredential(result: any) {
   try {
-    const accessToken = cred?.providerUserInfo?.accessToken || cred?._tokenResponse?.oauth_response?.access_token;
-    cacheGitHubAccessToken(accessToken);
-  } catch { /* ignore */ }
+    const credential = GithubAuthProvider.credentialFromResult(result);
+    cacheGitHubAccessToken(credential?.accessToken ?? null);
+  } catch (error) {
+    console.warn('Unable to extract GitHub OAuth credential:', error);
+  }
 }
 
 /**
