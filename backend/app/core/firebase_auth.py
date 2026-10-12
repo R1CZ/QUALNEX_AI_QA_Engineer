@@ -107,6 +107,8 @@ def _serialize(value: Any) -> Any:
 # Get or Create Application User
 # ============================================================
 
+
+
 async def get_or_create_user(
     firebase_user: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -114,29 +116,28 @@ async def get_or_create_user(
     Retrieve an existing application user or create one from
     verified Firebase user information.
 
-    Existing users retain their current organization and role.
-
-    For new users, reuse the earliest existing organization when
-    one exists. Otherwise, create a default organization.
+    Existing users retain their organization and role.
+    New users reuse the earliest existing organization, or create
+    a default organization if none exists.
     """
+    from uuid import uuid4
+
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
 
     from app.db.session import AsyncSessionLocal
-    from app.models.models import User
-    from sqlalchemy import select
-    
-    async with AsyncSessionLocal() as db:
-        # Try to find existing user by Firebase UID
-        result = await db.execute(
-            select(User).where(User.firebase_uid == firebase_user['uid'])
+    from app.models.models import User, UserRole, Organization
+
+    firebase_uid = firebase_user["uid"]
+    email = firebase_user.get("email")
+
+    if not email:
+        raise ValueError(
+            "The authenticated Firebase account does not have an email."
         )
 
     async with AsyncSessionLocal() as db:
-
-        # ----------------------------------------------------
         # Find an existing user by Firebase UID.
-        # Eager-load organization to avoid async lazy-loading errors.
-        # ----------------------------------------------------
-
         result = await db.execute(
             select(User)
             .options(selectinload(User.organization))
@@ -147,7 +148,6 @@ async def get_or_create_user(
 
         if user:
             user.last_login_at = datetime.utcnow()
-
             await db.commit()
 
             organization = user.organization
@@ -168,41 +168,36 @@ async def get_or_create_user(
                     else None
                 ),
             }
-        
-        # Create new user. Reuse the first existing organization when one
-        # is present so all users in this deployment share one tenant;
-        # otherwise create a default organization.
-        # NOTE: Organization lives in app.models.models (there is no
-        # app/models/organization.py module — that import variant caused
-        # ModuleNotFoundError at login).
-        from app.models.models import Organization
-        from uuid import uuid4
-        
-        org_result = await db.execute(select(Organization).order_by(Organization.created_at).limit(1))
-        org = org_result.scalar_one_or_none()
-        created_new_org = False
-        if org is None:
-            org = Organization(
+
+        # Reuse the earliest existing organization.
+        # Create one only when no organization exists.
+        org_result = await db.execute(
+            select(Organization)
+            .order_by(Organization.created_at)
+            .limit(1)
+        )
+
+        organization = org_result.scalar_one_or_none()
+
+        if organization is None:
+            organization = Organization(
                 id=uuid4(),
                 name="My Organization",
                 plan="free",
                 created_at=datetime.utcnow(),
             )
-            db.add(org)
-            created_new_org = True
-        await db.flush()
-        
+            db.add(organization)
+            await db.flush()
+
+        # Create the new application user.
         user = User(
             id=uuid4(),
             firebase_uid=firebase_uid,
             email=email,
-            name=(
-                firebase_user.get("display_name")
-                or email
-            ),
+            name=firebase_user.get("display_name") or email,
             avatar_url=firebase_user.get("photo_url"),
             organization_id=organization.id,
-            role=role,
+            role=UserRole.MEMBER,
             provider=firebase_user.get("provider", "unknown"),
             created_at=datetime.utcnow(),
             last_login_at=datetime.utcnow(),
@@ -210,8 +205,6 @@ async def get_or_create_user(
 
         db.add(user)
         await db.commit()
-
-        # Ensure generated and persisted values are available.
         await db.refresh(user)
 
         return {
